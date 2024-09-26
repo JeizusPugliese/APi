@@ -211,9 +211,11 @@ def get_tarjetas(user_id):
         print(f"Error en la consulta: {e}")
         return jsonify({"message": "Error en la consulta a la base de datos"}), 500
 
-
+@app.route('/')
+def home():
+    return jsonify({"message": "API en funcionamiento"}), 200
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0')
+    app.run(debug=True)
 
