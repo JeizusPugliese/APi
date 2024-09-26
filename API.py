@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 from flask_mysqldb import MySQL, MySQLdb
 from flask_cors import CORS
+import os 
 
 app = Flask(__name__, static_url_path='/static')
 CORS(app)
@@ -13,6 +14,11 @@ app.config['MYSQL_DB'] = 'bwmc0ch6np8udxefdc4p'
 
 mysql = MySQL(app)
 
+port = int(os.environ.get('PORT', 5000))
+
+@app.route('/')
+def home():
+    return jsonify({"message": "Bienvenido a la API!"})
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -211,11 +217,7 @@ def get_tarjetas(user_id):
         print(f"Error en la consulta: {e}")
         return jsonify({"message": "Error en la consulta a la base de datos"}), 500
 
-@app.route('/')
-def home():
-    return jsonify({"message": "API en funcionamiento"}), 200
-
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=port)
 
