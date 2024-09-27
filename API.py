@@ -217,6 +217,142 @@ def get_tarjetas(user_id):
         print(f"Error en la consulta: {e}")
         return jsonify({"message": "Error en la consulta a la base de datos"}), 500
 
+# rutas para insertar valores de los sensores 
+
+@app.route('/add_temperatura_dht11', methods=['POST'])
+def add_temperatura_dht11():
+    data = request.json
+    id_sensor = 1 
+    id_usuarios = data.get('id_usuarios')
+    valor_de_la_medida = data.get('valor_de_la_medida')
+
+    if not valor_de_la_medida or not id_usuarios:
+        return jsonify({"success": False, "message": "Faltan datos"}), 400
+
+    try:
+        cursor = mysql.connection.cursor()
+        query = "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida, fecha) VALUES (%s, %s, %s, NOW())"
+        cursor.execute(query, (id_sensor, id_usuarios, valor_de_la_medida))
+        mysql.connection.commit()
+        cursor.close()
+
+        return jsonify({"success": True, "message": "Medida de temperatura añadida con éxito"}), 201
+    except Exception as e:
+        print(f"Error al añadir medida: {e}")
+        return jsonify({"success": False, "message": "Error al añadir medida"}), 500
+
+@app.route('/add_humedad_dht11', methods=['POST'])
+def add_humedad_dht11():
+    data = request.json
+    id_sensor = 6 
+    id_usuarios = data.get('id_usuarios')
+    valor_de_la_medida = data.get('valor_de_la_medida')
+
+    if not valor_de_la_medida or not id_usuarios:
+        return jsonify({"success": False, "message": "Faltan datos"}), 400
+
+    try:
+        cursor = mysql.connection.cursor()
+        query = "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida, fecha) VALUES (%s, %s, %s, NOW())"
+        cursor.execute(query, (id_sensor, id_usuarios, valor_de_la_medida))
+        mysql.connection.commit()
+        cursor.close()
+
+        return jsonify({"success": True, "message": "Medida de humedad añadida con éxito"}), 201
+    except Exception as e:
+        print(f"Error al añadir medida: {e}")
+        return jsonify({"success": False, "message": "Error al añadir medida"}), 500
+
+
+@app.route('/add_gas', methods=['POST'])
+def add_gas():
+    data = request.json
+    id_sensor = 2
+    id_usuarios = data.get('id_usuarios')
+    valor_de_la_medida = data.get('valor_de_la_medida')
+
+    if not valor_de_la_medida or not id_usuarios:
+        return jsonify({"success": False, "message": "Faltan datos"}), 400
+
+    try:
+        cursor = mysql.connection.cursor()
+        query = "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida, fecha) VALUES (%s, %s, %s, NOW())"
+        cursor.execute(query, (id_sensor, id_usuarios, valor_de_la_medida))
+        mysql.connection.commit()
+        cursor.close()
+
+        return jsonify({"success": True, "message": "Medida de gas añadida con éxito"}), 201
+    except Exception as e:
+        print(f"Error al añadir medida: {e}")
+        return jsonify({"success": False, "message": "Error al añadir medida"}), 500
+
+
+
+@app.route('/add_movimiento', methods=['POST'])
+def add_movimiento():
+    data = request.json
+    id_sensor = 3  
+    id_usuarios = data.get('id_usuarios')
+    valor_de_la_medida = data.get('valor_de_la_medida')
+
+    if not valor_de_la_medida or not id_usuarios:
+        return jsonify({"success": False, "message": "Faltan datos"}), 400
+
+    try:
+        cursor = mysql.connection.cursor()
+        query = "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida, fecha) VALUES (%s, %s, %s, NOW())"
+        cursor.execute(query, (id_sensor, id_usuarios, valor_de_la_medida))
+        mysql.connection.commit()
+        cursor.close()
+
+        return jsonify({"success": True, "message": "Medida de gas añadida con éxito"}), 201
+    except Exception as e:
+        print(f"Error al añadir medida: {e}")
+        return jsonify({"success": False, "message": "Error al añadir medida"}), 500
+
+@app.route('/add_pir', methods=['POST'])
+def add_pir():
+    data = request.json
+    id_sensor = 4  
+    id_usuarios = data.get('id_usuarios')
+    valor_de_la_medida = data.get('valor_de_la_medida')
+
+    if not valor_de_la_medida or not id_usuarios:
+        return jsonify({"success": False, "message": "Faltan datos"}), 400
+
+    try:
+        cursor = mysql.connection.cursor()
+        query = "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida, fecha) VALUES (%s, %s, %s, NOW())"
+        cursor.execute(query, (id_sensor, id_usuarios, valor_de_la_medida))
+        mysql.connection.commit()
+        cursor.close()
+
+        return jsonify({"success": True, "message": "Medida de gas añadida con éxito"}), 201
+    except Exception as e:
+        print(f"Error al añadir medida: {e}")
+        return jsonify({"success": False, "message": "Error al añadir medida"}), 500
+
+@app.route('/add_luz', methods=['POST'])
+def add_luz():
+    data = request.json
+    id_sensor = 5 
+    id_usuarios = data.get('id_usuarios')
+    valor_de_la_medida = data.get('valor_de_la_medida')
+
+    if not valor_de_la_medida or not id_usuarios:
+        return jsonify({"success": False, "message": "Faltan datos"}), 400
+
+    try:
+        cursor = mysql.connection.cursor()
+        query = "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida, fecha) VALUES (%s, %s, %s, NOW())"
+        cursor.execute(query, (id_sensor, id_usuarios, valor_de_la_medida))
+        mysql.connection.commit()
+        cursor.close()
+
+        return jsonify({"success": True, "message": "Medida de gas añadida con éxito"}), 201
+    except Exception as e:
+        print(f"Error al añadir medida: {e}")
+        return jsonify({"success": False, "message": "Error al añadir medida"}), 500
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
