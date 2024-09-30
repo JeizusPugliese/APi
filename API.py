@@ -155,20 +155,6 @@ def get_medidas():
     except MySQLdb.Error as e:
         print(f"Error en la consulta: {e}")
         return jsonify({"error": str(e)}), 500
-    
-
-@app.route('/eliminar_usuario/<correo>', methods=['DELETE'])
-def eliminar_usuario(correo):
-    cursor = mysql.connection.cursor()
-    query = "DELETE FROM usuarios WHERE correo = %s"
-    result = cursor.execute(query, (correo,))
-    mysql.connection.commit()
-    cursor.close()
-
-    if result == 0:  # Si no se elimina ningún registro
-        return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
-
-    return jsonify({"success": True, "message": "Usuario eliminado"}), 200
 
 
 @app.route('/historial')
@@ -219,12 +205,16 @@ def get_tarjetas(user_id):
 
 @app.route('/eliminar_usuario/<correo>', methods=['DELETE'])
 def eliminar_usuario(correo):
-    cur = mysql.connection.cursor()
-    cur.execute("DELETE FROM usuarios WHERE correo = %s", [correo])
+    cursor = mysql.connection.cursor()
+    query = "DELETE FROM usuarios WHERE correo = %s"
+    result = cursor.execute(query, (correo,))
     mysql.connection.commit()
-    cur.close()
-    
-    return jsonify({'message': 'Usuario eliminado'}), 200
+    cursor.close()
+
+    if result == 0:  
+        return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
+
+    return jsonify({"success": True, "message": "Usuario eliminado"}), 200
 
 # ruta para insertar valores de los sensores 
 
