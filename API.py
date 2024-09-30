@@ -217,6 +217,15 @@ def get_tarjetas(user_id):
         print(f"Error en la consulta: {e}")
         return jsonify({"message": "Error en la consulta a la base de datos"}), 500
 
+@app.route('/eliminar_usuario/<correo>', methods=['DELETE'])
+def eliminar_usuario(correo):
+    cur = mysql.connection.cursor()
+    cur.execute("DELETE FROM usuarios WHERE correo = %s", [correo])
+    mysql.connection.commit()
+    cur.close()
+    
+    return jsonify({'message': 'Usuario eliminado'}), 200
+
 # ruta para insertar valores de los sensores 
 
 @app.route('/insertar_medidas', methods=['POST'])
