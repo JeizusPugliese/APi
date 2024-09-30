@@ -55,34 +55,6 @@ def login():
         return jsonify({"success": False, "message": "Error en la consulta a la base de datos"}), 500
 
 
-@app.route('/crear_usuario', methods=['POST'])
-def crear_usuario():
-    data = request.json
-    correo = data['correo']
-    
-    
-    cur = mysql.connection.cursor()
-    cur.execute("SELECT * FROM usuarios WHERE correo = %s", [correo])
-    existing_user = cur.fetchone()
-    
-    if existing_user:
-        return jsonify({'error': 'El correo ya está registrado'}), 409  #
-    
-    # Insertar nuevo usuario
-    nombre = data['nombre']
-    apellido = data['apellido']
-    password = data['password']
-    celular = data['celular']
-    rol = data['rol']
-
-    cur.execute("INSERT INTO usuarios (nombre, apellido, correo, password, celular, id_rol) VALUES (%s, %s, %s, %s, %s, %s)", 
-                (nombre, apellido, correo, password, celular, rol))
-    mysql.connection.commit()
-    cur.close()
-    
-    return jsonify({'message': 'Usuario creado exitosamente'}), 201  
-
-
 @app.route('/obtener_usuario/<correo>', methods=['GET'])
 def obtener_usuario(correo):
     cursor = mysql.connection.cursor()
@@ -96,7 +68,7 @@ def obtener_usuario(correo):
             "nombre": usuario[0],
             "apellido": usuario[1],
             "correo": usuario[2],
-            "password": usuario[3],
+            "password": usuario[3],  # Asegúrate de manejar la contraseña adecuadamente
             "celular": usuario[4]
         }})
     else:
@@ -122,7 +94,6 @@ def actualizar_usuario():
     cursor.close()
 
     return jsonify({"success": True, "message": "Usuario actualizado"})
-
 
 @app.route('/tipo_sensor', methods=['GET'])
 def get_tipo_sensores():
