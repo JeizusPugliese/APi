@@ -111,17 +111,29 @@ def actualizar_usuario():
     password = data.get('password')
     celular = data.get('celular')
 
-    cursor = mysql.connection.cursor()
-    query = """
-        UPDATE usuarios 
-        SET nombre = %s, apellido = %s, password = %s, celular = %s
-        WHERE correo = %s
-    """
-    cursor.execute(query, (nombre, apellido, password, celular, correo))
-    mysql.connection.commit()
-    cursor.close()
+    if not all([nombre, apellido, correo, password, celular]):
+        return jsonify({"success": False, "message": "Todos los campos son requeridos"}), 400
 
-    return jsonify({"success": True, "message": "Usuario actualizado"})
+    try:
+        cursor = mysql.connection.cursor()
+        query = """
+            UPDATE usuarios 
+            SET nombre = %s, apellido = %s, password = %s, celular = %s
+            WHERE correo = %s
+        """
+        cursor.execute(query, (nombre, apellido, password, celular, correo))
+        mysql.connection.commit()
+        cursor.close()
+        
+        if cursor.rowcount == 0:
+            return jsonify({"success": False, "message": "No se encontró el usuario"}), 404
+        
+        return jsonify({"success": True, "message": "Usuario actualizado"})
+    
+    except Exception as e:
+        mysql.connection.rollback()  # Revertir cambios en caso de error
+        print(f"Error al actualizar el usuario: {e}")  # Loguear error para depuración
+        return jsonify({"success": False, "message": "Error al actualizar el usuario"}), 500
 
 @app.route('/eliminar_usuario/<correo>', methods=['DELETE'])
 def eliminar_usuario(correo):
