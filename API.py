@@ -83,6 +83,47 @@ def crear_usuario():
     return jsonify({'message': 'Usuario creado exitosamente'}), 201  
 
 
+@app.route('/obtener_usuario/<correo>', methods=['GET'])
+def obtener_usuario(correo):
+    cursor = mysql.connection.cursor()
+    query = "SELECT nombre, apellido, correo, password, celular FROM usuarios WHERE correo = %s"
+    cursor.execute(query, (correo,))
+    usuario = cursor.fetchone()
+    cursor.close()
+
+    if usuario:
+        return jsonify({"success": True, "usuario": {
+            "nombre": usuario[0],
+            "apellido": usuario[1],
+            "correo": usuario[2],
+            "password": usuario[3],
+            "celular": usuario[4]
+        }})
+    else:
+        return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
+
+@app.route('/actualizar_usuario', methods=['PUT'])
+def actualizar_usuario():
+    data = request.json
+    nombre = data.get('nombre')
+    apellido = data.get('apellido')
+    correo = data.get('correo')
+    password = data.get('password')
+    celular = data.get('celular')
+
+    cursor = mysql.connection.cursor()
+    query = """
+        UPDATE usuarios 
+        SET nombre = %s, apellido = %s, password = %s, celular = %s
+        WHERE correo = %s
+    """
+    cursor.execute(query, (nombre, apellido, password, celular, correo))
+    mysql.connection.commit()
+    cursor.close()
+
+    return jsonify({"success": True, "message": "Usuario actualizado"})
+
+
 @app.route('/tipo_sensor', methods=['GET'])
 def get_tipo_sensores():
     try:
