@@ -157,18 +157,18 @@ def get_medidas():
         return jsonify({"error": str(e)}), 500
     
 
-@app.route('/ultimo_valor/<int:sensor_id>', methods=['GET'])
-def ultimo_valor(sensor_id):
+@app.route('/eliminar_usuario/<correo>', methods=['DELETE'])
+def eliminar_usuario(correo):
     cursor = mysql.connection.cursor()
-    query = "SELECT valor_de_la_medida FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1"
-    cursor.execute(query, (sensor_id,))
-    resultado = cursor.fetchone()
+    query = "DELETE FROM usuarios WHERE correo = %s"
+    result = cursor.execute(query, (correo,))
+    mysql.connection.commit()
     cursor.close()
-    
-    if resultado:
-        return jsonify({'valor': resultado[0]})
-    else:
-        return jsonify({'valor': 'No hay datos disponibles'}), 404
+
+    if result == 0:  # Si no se elimina ningún registro
+        return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
+
+    return jsonify({"success": True, "message": "Usuario eliminado"}), 200
 
 
 @app.route('/historial')
