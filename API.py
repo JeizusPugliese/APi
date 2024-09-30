@@ -55,13 +55,6 @@ def login():
         return jsonify({"success": False, "message": "Error en la consulta a la base de datos"}), 500
 
 
-
-@app.route('/layout-sidenav-light')
-def layout_sidenav_light():
-    if 'user_role' not in session or session['user_role'] != 'admin':
-        return redirect(url_for('index.html')) 
-    return render_template('layout-sidenav-light.html')
-
 @app.route('/crear_usuario', methods=['POST'])
 def crear_usuario():
     data = request.json
@@ -104,6 +97,19 @@ def get_tipo_sensores():
     except Exception as e:
         print(f"Error al obtener tipos de sensores: {e}")
         return jsonify({"success": False, "message": "Error al obtener tipos de sensores"}), 500
+
+@app.route('/ultimo_valor/<int:sensor_id>', methods=['GET'])
+def ultimo_valor(sensor_id):
+    cursor = mysql.connection.cursor()
+    query = "SELECT valor_de_la_medida FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1"
+    cursor.execute(query, (sensor_id,))
+    resultado = cursor.fetchone()
+    cursor.close()
+    
+    if resultado:
+        return jsonify({'valor': resultado[0]})
+    else:
+        return jsonify({'valor': 'No hay datos disponibles'}), 404
 
 
 @app.route('/add_sensor', methods=['POST'])
