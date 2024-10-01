@@ -1,7 +1,8 @@
-from flask import Flask, request, jsonify, render_template, redirect, url_for, session, datetime
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session
 from flask_mysqldb import MySQL, MySQLdb
 from flask_cors import CORS
 import os 
+from datetime import datetime
 
 app = Flask(__name__, static_url_path='/static')
 CORS(app)
