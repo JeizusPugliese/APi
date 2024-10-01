@@ -209,15 +209,15 @@ def consultar_reportes():
     nombre_sensor = data.get('nombreSensor')
 
     try:
-        # Conversión de fechas de string a formato datetime
+      
         fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
         fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d')
 
         cur = mysql.connection.cursor()
 
-        # Consulta a la base de datos para obtener los resultados dentro del rango de fechas
+        
         query = '''
-            SELECT m.fecha, m.valor_de_la_medida
+            SELECT s.nombre_sensor, m.fecha, m.valor_de_la_medida
             FROM medidas m
             JOIN sensores s ON m.id_sensor = s.id
             WHERE s.nombre_sensor = %s
@@ -226,12 +226,13 @@ def consultar_reportes():
         cur.execute(query, (nombre_sensor, fecha_inicio_dt, fecha_fin_dt))
         resultados = cur.fetchall()
 
-        # Estructura de los resultados en formato JSON
+     
         data = []
         for row in resultados:
             data.append({
-                'fecha': row[0].strftime('%Y-%m-%d %H:%M:%S'),  # Formato de la fecha
-                'valor': row[1]
+                'nombreSensor': row[0], 
+                'fecha': row[1].strftime('%Y-%m-%d %H:%M:%S'),  
+                'valor': row[2]  
             })
 
         cur.close()
@@ -241,6 +242,7 @@ def consultar_reportes():
     except Exception as e:
         print(f"Error: {e}")
         return jsonify({'error': 'No se pudieron obtener los datos'}), 500
+
 
 @app.route('/sensores_todos', methods=['GET'])
 def obtener_todos_los_sensores():
