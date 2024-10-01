@@ -199,33 +199,47 @@ def add_sensor():
         print(f"Error en la consulta: {e}")
         return jsonify({"success": False, "message": "Error en la consulta a la base de datos"}), 500
     
-@app.route('/get_medidas', methods=['GET'])
-def get_medidas():
-    db = None
-    cursor = None
+@app.route('/consultar_reportes', methods=['POST'])
+def consultar_reportes():
+    data = request.get_json()
+
+    fecha_inicio = data.get('fechaInicio')
+    fecha_fin = data.get('fechaFin')
+    nombre_sensor = data.get('nombreSensor')
+
     try:
- 
-        db = mysql.connection
-        cursor = db.cursor()
+        # Conversión de fechas de string a formato datetime
+        fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
+        fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d')
 
-        cursor.execute("SELECT id, id_sensor, id_usuarios, valor_de_la_medida, fecha FROM medidas")
-        results = cursor.fetchall()
+        cur = mysql.connection.cursor()
 
-        medidas = []
-        for row in results:
-            medidas.append({
-                "id": row[0],
-                "id_sensor": row[1],
-                "id_usuarios": row[2],
-                "valor_de_la_medida": row[3],
-                "fecha": row[4].strftime('%Y-%m-%d %H:%M:%S') if row[4] else None
+        # Consulta a la base de datos para obtener los resultados dentro del rango de fechas
+        query = '''
+            SELECT m.fecha, m.valor_de_la_medida
+            FROM medidas m
+            JOIN sensores s ON m.id_sensor = s.id
+            WHERE s.nombre_sensor = %s
+            AND m.fecha BETWEEN %s AND %s
+        '''
+        cur.execute(query, (nombre_sensor, fecha_inicio_dt, fecha_fin_dt))
+        resultados = cur.fetchall()
+
+        # Estructura de los resultados en formato JSON
+        data = []
+        for row in resultados:
+            data.append({
+                'fecha': row[0].strftime('%Y-%m-%d %H:%M:%S'),  # Formato de la fecha
+                'valor': row[1]
             })
 
-        return jsonify(medidas), 200
+        cur.close()
 
-    except MySQLdb.Error as e:
-        print(f"Error en la consulta: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify(data), 200
+
+    except Exception as e:
+        print(f"Error: {e}")
+        return jsonify({'error': 'No se pudieron obtener los datos'}), 500
 
 
 @app.route('/historial')
