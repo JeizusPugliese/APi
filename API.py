@@ -250,17 +250,19 @@ def obtener_todos_los_sensores():
             SELECT s.nombre_sensor, m.fecha, m.valor_de_la_medida
             FROM medidas m
             JOIN sensores s ON m.id_sensor = s.id
+            ORDER BY m.fecha DESC  -- Opcional: ordenar por fecha si lo necesitas
         """
         cur.execute(query)
         resultados = cur.fetchall()
 
         # Formatear los resultados
-        data = [{'sensor': row[0], 'fecha': str(row[1]), 'valor': row[2]} for row in resultados]
+        data = [{'sensor': row[0], 'valor': row[1]}, 'fecha': row[2].strftime('%Y-%m-%d %H:%M:%S') for row in resultados]
 
         return jsonify(data), 200
 
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
 
 
 @app.route('/historial')
