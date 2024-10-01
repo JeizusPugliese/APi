@@ -257,8 +257,8 @@ def obtener_todos_los_sensores():
         cur.execute(query)
         resultados = cur.fetchall()
 
-        # Formatear los resultados
-        data = [{'sensor': row[0], 'valor': row[1], 'fecha': row[2].strftime('%Y-%m-%d %H:%M:%S')} for row in resultados]
+        # Formatear los resultados con los índices correctos
+        data = [{'sensor': row[0], 'fecha': row[1].strftime('%Y-%m-%d %H:%M:%S'), 'valor': row[2]} for row in resultados]
 
         return jsonify(data), 200
 
