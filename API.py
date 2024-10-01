@@ -242,6 +242,26 @@ def consultar_reportes():
         print(f"Error: {e}")
         return jsonify({'error': 'No se pudieron obtener los datos'}), 500
 
+@app.route('/sensores_todos', methods=['GET'])
+def obtener_todos_los_sensores():
+    try:
+        cur = mysql.connection.cursor()
+        query = """
+            SELECT s.nombre_sensor, m.fecha, m.valor_de_la_medida
+            FROM medidas m
+            JOIN sensores s ON m.id_sensor = s.id
+        """
+        cur.execute(query)
+        resultados = cur.fetchall()
+
+        # Formatear los resultados
+        data = [{'sensor': row[0], 'fecha': str(row[1]), 'valor': row[2]} for row in resultados]
+
+        return jsonify(data), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/historial')
 def mostrar_historial():
