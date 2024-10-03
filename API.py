@@ -2,7 +2,9 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_mysqldb import MySQL, MySQLdb
 from flask_cors import CORS
 import os 
+import pytz
 from datetime import datetime
+
 
 app = Flask(__name__, static_url_path='/static')
 CORS(app)
@@ -275,10 +277,25 @@ def mostrar_historial():
     cursor.execute(query, (sensor_id,))
     historial = cursor.fetchall()
     cursor.close()
-    
-    # Convertir los resultados a una lista de diccionarios
-    historial_json = [{'valor': h[0], 'fecha': h[1]} for h in historial]
-    
+
+    # Definir la zona horaria de Colombia
+    colombia_tz = pytz.timezone('America/Bogota')
+
+    # Convertir los resultados a una lista de diccionarios, ajustando la zona horaria
+    historial_json = []
+    for h in historial:
+        valor = h[0]
+        fecha_utc = h[1]
+
+        # Asegurarse de que la fecha está en formato datetime y convertirla a la zona horaria de Colombia
+        if isinstance(fecha_utc, datetime):
+            fecha_colombia = fecha_utc.replace(tzinfo=pytz.utc).astimezone(colombia_tz)
+            fecha_formateada = fecha_colombia.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            fecha_formateada = fecha_utc  # En caso de que no sea un datetime, dejarlo tal cual
+
+        historial_json.append({'valor': valor, 'fecha': fecha_formateada})
+
     # Retornar los datos en formato JSON
     return jsonify(historial_json)
 
