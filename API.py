@@ -16,6 +16,7 @@ app.config['MYSQL_PASSWORD'] = 'UofpetGdsNMdjfA4reNC'
 app.config['MYSQL_DB'] = 'bwmc0ch6np8udxefdc4p'
 
 mysql = MySQL(app)
+revoked_tokens = set()
 
 port = int(os.environ.get('PORT', 5000))
 
@@ -43,12 +44,18 @@ def login():
             user_id, correo_db, password_db, id_rol = user
 
             if password_db == password:
+                # Generar el token
+                token = jwt.encode({
+                    'id': user_id,
+                    'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)  # Expira en 1 hora
+                }, SECRET_KEY, algorithm='HS256')
+
                 cursor = mysql.connection.cursor()
                 query = "SELECT nombre FROM rol WHERE id = %s"
                 cursor.execute(query, (id_rol,))
                 rol = cursor.fetchone()[0]
                 cursor.close()
-                return jsonify({"success": True, "rol": rol, "id": user_id}), 200  # Devolver la ID del usuario
+                return jsonify({"success": True, "token": token, "rol": rol, "id": user_id}), 200
             else:
                 return jsonify({"success": False, "message": "Contraseña incorrecta"}), 401
         else:
@@ -56,6 +63,45 @@ def login():
     except Exception as e:
         print(f"Error en la consulta: {e}")
         return jsonify({"success": False, "message": "Error en la consulta a la base de datos"}), 500
+        
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    token = request.headers.get('Authorization')
+    print(f"Token recibido: {token}")  # Para depuración
+    
+    if not token or not verificar_token(token):
+        return jsonify({'error': 'Unauthorized'}), 401
+    
+    # Revocar el token
+    if token.startswith("Bearer "):
+        token = token.split(" ")[1]
+    
+    revoked_tokens.add(token)  # Agregar a la lista de revocación
+
+    return jsonify({'message': 'Sesión cerrada con éxito'}), 200
+
+def verificar_token(token):
+    try:
+        if token.startswith("Bearer "):
+            token = token.split(" ")[1]
+        
+        # Decodificar el token
+        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        
+        # Verificar si el token está en la lista de revocación
+        if token in revoked_tokens:
+            print("Token revocado")
+            return False
+        
+        print("Token válido:", payload)
+        return True
+    except jwt.ExpiredSignatureError:
+        print("El token ha expirado")
+        return False
+    except jwt.InvalidTokenError:
+        print("Token inválido")
+        return False
 
 
 @app.route('/crear_usuario', methods=['POST'])
