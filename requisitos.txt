@@ -3,5 +3,5 @@ flask_mysqldb
 flask_cors
 gunicorn
 datetime
-import jwt as pyjwt
+PyJWT
 timedelta
