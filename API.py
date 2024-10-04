@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_mysqldb import MySQL, MySQLdb
 from flask_cors import CORS
 import os 
-import jwt
+import jwt as pyjwt
 from datetime import datetime
 
 
