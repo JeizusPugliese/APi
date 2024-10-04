@@ -2,10 +2,10 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_mysqldb import MySQL, MySQLdb
 from flask_cors import CORS
 import os 
-import jwt as pyjwt 
 from datetime import datetime
-import jwt
 import datetime
+import jwt as pyjwt
+
 
 app = Flask(__name__, static_url_path='/static')
 CORS(app)
@@ -16,6 +16,7 @@ app.config['MYSQL_USER'] = 'ub5pgwfmqlphbjdl'
 app.config['MYSQL_PASSWORD'] = 'UofpetGdsNMdjfA4reNC'
 app.config['MYSQL_DB'] = 'bwmc0ch6np8udxefdc4p'
 
+
 mysql = MySQL(app)
 revoked_tokens = set()
 
@@ -24,6 +25,7 @@ port = int(os.environ.get('PORT', 5000))
 @app.route('/')
 def home():
     return jsonify({"message": "Bienvenido a la API!"})
+
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -63,7 +65,7 @@ def login():
     except Exception as e:
         print(f"Error en la consulta: {e}")
         return jsonify({"success": False, "message": "Error en la consulta a la base de datos"}), 500
-        
+
 
 @app.route('/logout', methods=['POST'])
 def logout():
@@ -78,7 +80,6 @@ def logout():
         token = token.split(" ")[1]
     
     revoked_tokens.add(token)  # Agregar a la lista de revocación
-
     return jsonify({'message': 'Sesión cerrada con éxito'}), 200
 
 def verificar_token(token):
@@ -109,7 +110,6 @@ def crear_usuario():
     data = request.json
     correo = data['correo']
     
-    
     cur = mysql.connection.cursor()
     cur.execute("SELECT * FROM usuarios WHERE correo = %s", [correo])
     existing_user = cur.fetchone()
@@ -123,7 +123,6 @@ def crear_usuario():
     password = data['password']
     celular = data['celular']
     rol = data['rol']
-
     cur.execute("INSERT INTO usuarios (nombre, apellido, correo, password, celular, id_rol) VALUES (%s, %s, %s, %s, %s, %s)", 
                 (nombre, apellido, correo, password, celular, rol))
     mysql.connection.commit()
@@ -139,7 +138,6 @@ def obtener_usuario(correo):
     cursor.execute(query, (correo,))
     usuario = cursor.fetchone()
     cursor.close()
-
     if usuario:
         return jsonify({"success": True, "usuario": {
             "nombre": usuario[0],
@@ -159,10 +157,8 @@ def actualizar_usuario():
     correo = data.get('correo')
     password = data.get('password')
     celular = data.get('celular')
-
     if not all([nombre, apellido, correo, password, celular]):
         return jsonify({"success": False, "message": "Todos los campos son requeridos"}), 400
-
     try:
         cursor = mysql.connection.cursor()
         query = """
@@ -191,7 +187,6 @@ def eliminar_usuario(correo):
     result = cursor.execute(query, (correo,))
     mysql.connection.commit()
     cursor.close()
-
     if result == 0:  
         return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
 
@@ -205,7 +200,6 @@ def get_tipo_sensores():
         cursor.execute(query)
         tipos = cursor.fetchall()
         cursor.close()
-
         tipo_sensor_list = [{"id": t[0], "nombre": t[1]} for t in tipos]
         return jsonify({"success": True, "data": tipo_sensor_list}), 200
     except Exception as e:
@@ -232,10 +226,8 @@ def add_sensor():
     nombre_sensor = data.get('nombre_sensor')
     referencia = data.get('referencia')
     id_tipo_sensor = data.get('id_tipo_sensor')
-
     if not (nombre_sensor and referencia and id_tipo_sensor):
         return jsonify({"success": False, "message": "Faltan datos"}), 400
-
     try:
         cursor = mysql.connection.cursor()
         query = "INSERT INTO sensores (nombre_sensor, referencia, id_tipo_sensor) VALUES (%s, %s, %s)"
@@ -255,15 +247,14 @@ def consultar_reportes():
     fecha_inicio = data.get('fechaInicio')
     fecha_fin = data.get('fechaFin')
     nombre_sensor = data.get('nombreSensor')
-
     try:
-      
+        # Conversión de fechas de string a formato datetime
         fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
         fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d')
 
         cur = mysql.connection.cursor()
 
-        
+        # Consulta a la base de datos para obtener los resultados dentro del rango de fechas
         query = '''
             SELECT s.nombre_sensor, m.fecha, m.valor_de_la_medida
             FROM medidas m
@@ -274,13 +265,13 @@ def consultar_reportes():
         cur.execute(query, (nombre_sensor, fecha_inicio_dt, fecha_fin_dt))
         resultados = cur.fetchall()
 
-     
+        # Estructura de los resultados en formato JSON
         data = []
         for row in resultados:
             data.append({
-                'nombreSensor': row[0], 
-                'fecha': row[1].strftime('%Y-%m-%d %H:%M:%S'),  
-                'valor': row[2]  
+                'nombreSensor': row[0],  # Nombre del sensor
+                'fecha': row[1].strftime('%Y-%m-%d %H:%M:%S'),  # Formato de la fecha
+                'valor': row[2]  # Valor de la medida
             })
 
         cur.close()
@@ -290,6 +281,8 @@ def consultar_reportes():
     except Exception as e:
         print(f"Error: {e}")
         return jsonify({'error': 'No se pudieron obtener los datos'}), 500
+
+
 
 
 @app.route('/sensores_todos', methods=['GET'])
@@ -315,6 +308,7 @@ def obtener_todos_los_sensores():
 
 
 
+
 @app.route('/historial')
 def mostrar_historial():
     sensor_id = request.args.get('sensor')
@@ -323,25 +317,10 @@ def mostrar_historial():
     cursor.execute(query, (sensor_id,))
     historial = cursor.fetchall()
     cursor.close()
-
-    # Definir la zona horaria de Colombia
-    colombia_tz = pytz.timezone('America/Bogota')
-
-    # Convertir los resultados a una lista de diccionarios, ajustando la zona horaria
-    historial_json = []
-    for h in historial:
-        valor = h[0]
-        fecha_utc = h[1]
-
-        # Asegurarse de que la fecha está en formato datetime y convertirla a la zona horaria de Colombia
-        if isinstance(fecha_utc, datetime):
-            fecha_colombia = fecha_utc.replace(tzinfo=pytz.utc).astimezone(colombia_tz)
-            fecha_formateada = fecha_colombia.strftime('%Y-%m-%d %H:%M:%S')
-        else:
-            fecha_formateada = fecha_utc  # En caso de que no sea un datetime, dejarlo tal cual
-
-        historial_json.append({'valor': valor, 'fecha': fecha_formateada})
-
+    
+    # Convertir los resultados a una lista de diccionarios
+    historial_json = [{'valor': h[0], 'fecha': h[1]} for h in historial]
+    
     # Retornar los datos en formato JSON
     return jsonify(historial_json)
 
@@ -420,4 +399,3 @@ def insertar_medidas():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
-
