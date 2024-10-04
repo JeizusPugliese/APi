@@ -2,9 +2,9 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_mysqldb import MySQL, MySQLdb
 from flask_cors import CORS
 import os 
-import jwt as pyjwt
+import jwt 
 from datetime import datetime
-
+import datetime
 
 app = Flask(__name__, static_url_path='/static')
 CORS(app)
