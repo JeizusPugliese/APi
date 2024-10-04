@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_mysqldb import MySQL, MySQLdb
 from flask_cors import CORS
 import os 
-import jwt 
+import jwt as pyjwt 
 from datetime import datetime
 import datetime
 
@@ -45,7 +45,7 @@ def login():
 
             if password_db == password:
                 # Generar el token
-                token = jwt.encode({
+                token = pyjwt.encode({
                     'id': user_id,
                     'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)  # Expira en 1 hora
                 }, SECRET_KEY, algorithm='HS256')
@@ -87,7 +87,7 @@ def verificar_token(token):
             token = token.split(" ")[1]
         
         # Decodificar el token
-        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        payload = pyjwt.decode(token, SECRET_KEY, algorithms=['HS256'])
         
         # Verificar si el token está en la lista de revocación
         if token in revoked_tokens:
@@ -96,10 +96,10 @@ def verificar_token(token):
         
         print("Token válido:", payload)
         return True
-    except jwt.ExpiredSignatureError:
+    except pyjwt.ExpiredSignatureError:
         print("El token ha expirado")
         return False
-    except jwt.InvalidTokenError:
+    except pyjwt.InvalidTokenError:
         print("Token inválido")
         return False
 
