@@ -4,8 +4,8 @@ from flask_cors import CORS
 import os 
 import jwt as pyjwt 
 from datetime import datetime
+import jwt
 import datetime
-import pytz
 
 app = Flask(__name__, static_url_path='/static')
 CORS(app)
@@ -33,7 +33,6 @@ def login():
 
     if not correo or not password:
         return jsonify({"success": False, "message": "Faltan datos"}), 400
-
     try:
         cursor = mysql.connection.cursor()
         query = "SELECT id, correo, password, id_rol FROM usuarios WHERE correo = %s"
@@ -43,12 +42,11 @@ def login():
 
         if user:
             user_id, correo_db, password_db, id_rol = user
-
             if password_db == password:
-                # Generar el token
+                # Generar el token usando pyjwt.encode
                 token = pyjwt.encode({
                     'id': user_id,
-                    'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)  # Expira en 1 hora
+                    'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)
                 }, SECRET_KEY, algorithm='HS256')
 
                 cursor = mysql.connection.cursor()
@@ -56,6 +54,7 @@ def login():
                 cursor.execute(query, (id_rol,))
                 rol = cursor.fetchone()[0]
                 cursor.close()
+
                 return jsonify({"success": True, "token": token, "rol": rol, "id": user_id}), 200
             else:
                 return jsonify({"success": False, "message": "Contraseña incorrecta"}), 401
