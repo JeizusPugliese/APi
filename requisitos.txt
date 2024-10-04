@@ -3,5 +3,4 @@ flask_mysqldb
 flask_cors
 gunicorn
 datetime
-pytz
 jwt
