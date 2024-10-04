@@ -4,5 +4,5 @@ flask_cors
 gunicorn
 datetime
 PyJWT
-timedelta
+jwt
 pytz
