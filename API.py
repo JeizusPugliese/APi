@@ -13,7 +13,7 @@ CORS(app)
 SECRET_KEY = '12345666'
 app.config['MYSQL_HOST'] = 'bwmc0ch6np8udxefdc4p-mysql.services.clever-cloud.com'
 app.config['MYSQL_USER'] = 'ub5pgwfmqlphbjdl'
-app.config['MYSQL_PASSWORD'] = 'ub5pgwfmqlphbjdl'
+app.config['MYSQL_PASSWORD'] = 'UofpetGdsNMdjfA4reNC'
 app.config['MYSQL_DB'] = 'bwmc0ch6np8udxefdc4p'
 
 
