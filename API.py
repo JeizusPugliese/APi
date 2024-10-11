@@ -208,16 +208,25 @@ def get_tipo_sensores():
 
 @app.route('/ultimo_valor/<int:sensor_id>', methods=['GET'])
 def ultimo_valor(sensor_id):
-    cursor = mysql.connection.cursor()
-    query = "SELECT valor_de_la_medida FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1"
-    cursor.execute(query, (sensor_id,))
-    resultado = cursor.fetchone()
-    cursor.close()
+    if sensor_id < 1:
+        return jsonify({'error': 'ID de sensor no válido'}), 400
     
-    if resultado:
-        return jsonify({'valor': resultado[0]})
-    else:
-        return jsonify({'valor': 'No hay datos disponibles'}), 404
+    try:
+        cursor = mysql.connection.cursor()
+        query = "SELECT valor_de_la_medida FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1"
+        cursor.execute(query, (sensor_id,))
+        resultado = cursor.fetchone()
+        cursor.close()
+
+        # Imprime el resultado para depuración
+        print(f'Resultado obtenido: {resultado}')
+
+        if resultado:
+            return jsonify({'valor': resultado[0]})
+        else:
+            return jsonify({'valor': 'No hay datos disponibles'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/add_sensor', methods=['POST'])
