@@ -3,7 +3,6 @@ from flask_mysqldb import MySQL, MySQLdb
 from flask_cors import CORS
 import os 
 from datetime import datetime
-import datetime
 import jwt as pyjwt
 
 
