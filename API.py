@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, render_template, redirect, url_for, s
 from flask_mysqldb import MySQL, MySQLdb
 from flask_cors import CORS
 import os 
-from datetime import datetime
+from datetime import datetime, timedelta
 import jwt as pyjwt
 
 
@@ -47,7 +47,7 @@ def login():
                 # Generar el token usando pyjwt.encode
                 token = pyjwt.encode({
                     'id': user_id,
-                    'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+                    'exp': datetime.utcnow() + timedelta(hours=1)  # Corrección aquí
                 }, SECRET_KEY, algorithm='HS256')
 
                 cursor = mysql.connection.cursor()
