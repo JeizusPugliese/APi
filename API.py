@@ -103,6 +103,19 @@ def verificar_token(token):
         print("Token inválido")
         return False
 
+@app.route('/verificar_token', methods=['POST'])
+def verificar_token_route():
+    token = request.headers.get('Authorization')
+
+    if not token:
+        return jsonify({'success': False, 'message': 'Token no proporcionado'}), 401
+
+    if verificar_token(token):
+        return jsonify({'success': True, 'message': 'Token válido'}), 200
+    else:
+        return jsonify({'success': False, 'message': 'Token inválido o expirado'}), 401
+
+
 
 @app.route('/crear_usuario', methods=['POST'])
 def crear_usuario():
