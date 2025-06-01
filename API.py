@@ -147,19 +147,20 @@ def crear_usuario():
 def obtener_usuarios():
     cursor = mysql.connection.cursor()
     try:
-        query = "SELECT nombre, apellido, correo, password, celular FROM usuarios"
+        # Incluir todos los campos necesarios: id, nombre, apellido, correo, celular, id_rol
+        query = "SELECT id, nombre, apellido, correo, celular, id_rol FROM usuarios"
         cursor.execute(query)
         usuarios = cursor.fetchall()
         
         usuarios_list = []
         for usuario in usuarios:
             usuarios_list.append({
-                "nombre": usuario[0],
-                "apellido": usuario[1],
-                "correo": usuario[2],
-                "password": usuario[3],  # Considera no enviar las contraseñas o encriptarlas
+                "id": usuario[0],
+                "nombre": usuario[1],
+                "apellido": usuario[2],
+                "correo": usuario[3],
                 "celular": usuario[4],
-                "id_rol": usuario[5]
+                "rol": usuario[5]  
             })
             
         return jsonify({
