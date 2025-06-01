@@ -143,6 +143,38 @@ def crear_usuario():
     return jsonify({'message': 'Usuario creado exitosamente'}), 201  
 
 
+@app.route('/obtener_usuarios', methods=['GET'])
+def obtener_usuarios():
+    cursor = mysql.connection.cursor()
+    try:
+        query = "SELECT nombre, apellido, correo, password, celular FROM usuarios"
+        cursor.execute(query)
+        usuarios = cursor.fetchall()
+        
+        usuarios_list = []
+        for usuario in usuarios:
+            usuarios_list.append({
+                "nombre": usuario[0],
+                "apellido": usuario[1],
+                "correo": usuario[2],
+                "password": usuario[3],  # Considera no enviar las contraseñas o encriptarlas
+                "celular": usuario[4]
+            })
+            
+        return jsonify({
+            "success": True,
+            "usuarios": usuarios_list,
+            "count": len(usuarios_list)
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Error al obtener usuarios: {str(e)}"
+        }), 500
+    finally:
+        cursor.close()
+
+
 @app.route('/obtener_usuario/<correo>', methods=['GET'])
 def obtener_usuario(correo):
     cursor = mysql.connection.cursor()
