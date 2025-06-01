@@ -158,7 +158,8 @@ def obtener_usuarios():
                 "apellido": usuario[1],
                 "correo": usuario[2],
                 "password": usuario[3],  # Considera no enviar las contraseñas o encriptarlas
-                "celular": usuario[4]
+                "celular": usuario[4],
+                "id_rol": usuario[5]
             })
             
         return jsonify({
