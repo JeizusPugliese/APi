@@ -36,18 +36,18 @@ def login():
         return jsonify({"success": False, "message": "Faltan datos"}), 400
     try:
         cursor = mysql.connection.cursor()
-        query = "SELECT id, correo, password, id_rol FROM usuarios WHERE correo = %s"
+        # Añade 'nombre' a la consulta SELECT
+        query = "SELECT id, nombre, correo, password, id_rol FROM usuarios WHERE correo = %s"
         cursor.execute(query, (correo,))
         user = cursor.fetchone()
         cursor.close()
 
         if user:
-            user_id, correo_db, password_db, id_rol = user
+            user_id, nombre, correo_db, password_db, id_rol = user  # Ahora obtenemos el nombre
             if password_db == password:
-                # Generar el token usando pyjwt.encode
                 token = pyjwt.encode({
                     'id': user_id,
-                    'exp': datetime.utcnow() + timedelta(hours=1)  # Corrección aquí
+                    'exp': datetime.utcnow() + timedelta(hours=1)
                 }, SECRET_KEY, algorithm='HS256')
 
                 cursor = mysql.connection.cursor()
@@ -56,7 +56,14 @@ def login():
                 rol = cursor.fetchone()[0]
                 cursor.close()
 
-                return jsonify({"success": True, "token": token, "rol": rol, "id": user_id}), 200
+                # Devuelve el nombre del usuario en la respuesta
+                return jsonify({
+                    "success": True,
+                    "token": token,
+                    "rol": rol,
+                    "id": user_id,
+                    "nombre": nombre  # 👈 Esto es lo nuevo
+                }), 200
             else:
                 return jsonify({"success": False, "message": "Contraseña incorrecta"}), 401
         else:
