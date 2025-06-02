@@ -417,7 +417,7 @@ def insertar_medidas():
     nombre_usuario = data.get('nombre_usuario') 
     valor_de_la_medida = data.get('valor_de_la_medida')
 
-    if nombre_sensor is None or nombre_usuario is None or valor_de_la_medida is None:
+    if nombre_sensor is None or nombre_usuario is None or valor_de_la_medida is None:
         return jsonify({"success": False, "message": "Faltan datos"}), 400
 
     try:
