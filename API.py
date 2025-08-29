@@ -210,7 +210,7 @@ def actualizar_usuario():
     correo = data.get('correo')
     password = data.get('password')
     celular = data.get('celular')
-    if not all([nombre, apellido, correo, password, celular]):
+    if not all([nombre, apellido, correo, celular]):
         return jsonify({"success": False, "message": "Todos los campos son requeridos"}), 400
     try:
         cursor = mysql.connection.cursor()
@@ -452,3 +452,4 @@ def insertar_medidas():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
