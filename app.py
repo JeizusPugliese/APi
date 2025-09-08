@@ -5,6 +5,7 @@ import psycopg2
 from datetime import datetime, timedelta
 import jwt as pyjwt
 
+app = Flask(__name__, static_url_path='/static')
 CORS(app, 
      resources={r"/*": {"origins": "*"}}, 
      supports_credentials=True,
@@ -21,31 +22,18 @@ def get_connection():
         password="Greentech1302",    
         host="greentech.postgres.database.azure.com",
         port=5432,
-        database="softcul",
-        sslmode='require' 
+        database="softcul"           
     )
+    
 
 revoked_tokens = set()
-    
+
 @app.route('/')
 def home():
     return jsonify({"message": "Bienvenido a la API con PostgreSQL!"})
 
-@app.route('/home')
-def prueba():
-    return jsonify({"message": "Bienvenido prueba!"})
-
-@app.route('/login', methods=['POST', 'OPTIONS'])
+@app.route('/login', methods=['POST'])
 def login():
-    # Manejo explícito de solicitudes OPTIONS (preflight CORS)
-    if request.method == 'OPTIONS':
-        response = jsonify()
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        return response, 200
-    
-    # Manejo de la solicitud POST normal
     data = request.json
     correo = data.get('correo')
     password = data.get('password')
@@ -74,16 +62,13 @@ def login():
                 cursor.close()
                 conn.close()
 
-                # Agregar headers CORS a la respuesta exitosa
-                response = jsonify({
+                return jsonify({
                     "success": True,
                     "token": token,
                     "rol": rol,
                     "id": user_id,
                     "nombre": nombre
-                })
-                response.headers.add('Access-Control-Allow-Origin', '*')
-                return response, 200
+                }), 200
             else:
                 return jsonify({"success": False, "message": "Contraseña incorrecta"}), 401
         else:
@@ -504,13 +489,3 @@ def insertar_medidas():
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
-
-
-
-
-
-
-
-
-
-
