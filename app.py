@@ -21,7 +21,8 @@ def get_connection():
         password="Greentech1302",    
         host="greentech.postgres.database.azure.com",
         port=5432,
-        database="softcul"            
+        database="softcul",
+        sslmode='require' 
     )
 
 revoked_tokens = set()
@@ -503,6 +504,7 @@ def insertar_medidas():
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
 
