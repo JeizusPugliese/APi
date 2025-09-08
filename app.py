@@ -22,6 +22,10 @@ def get_connection():
     )
 
 revoked_tokens = set()
+
+@app.route('/')
+def prueba():
+    return jsonify({"message": "prueba!"})
     
 @app.route('/home')
 def home():
@@ -484,6 +488,7 @@ def insertar_medidas():
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
 
