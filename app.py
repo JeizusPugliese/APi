@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import jwt as pyjwt
 
 app = Flask(__name__, static_url_path='/static')
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
 SECRET_KEY = '12345666'
 port = int(os.environ.get('PORT', 5000))
@@ -488,6 +488,7 @@ def insertar_medidas():
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
 
