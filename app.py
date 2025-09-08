@@ -22,10 +22,7 @@ def get_connection():
     )
 
 revoked_tokens = set()
-
-@app.route('/')
-def home():
-    return jsonify({"message": "prueba de api!"})
+    
 @app.route('/home')
 def home():
     return jsonify({"message": "Bienvenido a la API con PostgreSQL!"})
@@ -487,5 +484,6 @@ def insertar_medidas():
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
