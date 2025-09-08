@@ -34,8 +34,17 @@ def home():
 def prueba():
     return jsonify({"message": "Bienvenido prueba!"})
 
-@app.route('/login', methods=['POST'])
+@app.route('/login', methods=['POST', 'OPTIONS'])
 def login():
+    # Manejo explícito de solicitudes OPTIONS (preflight CORS)
+    if request.method == 'OPTIONS':
+        response = jsonify()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        return response, 200
+    
+    # Manejo de la solicitud POST normal
     data = request.json
     correo = data.get('correo')
     password = data.get('password')
@@ -64,13 +73,16 @@ def login():
                 cursor.close()
                 conn.close()
 
-                return jsonify({
+                # Agregar headers CORS a la respuesta exitosa
+                response = jsonify({
                     "success": True,
                     "token": token,
                     "rol": rol,
                     "id": user_id,
                     "nombre": nombre
-                }), 200
+                })
+                response.headers.add('Access-Control-Allow-Origin', '*')
+                return response, 200
             else:
                 return jsonify({"success": False, "message": "Contraseña incorrecta"}), 401
         else:
@@ -491,6 +503,7 @@ def insertar_medidas():
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
 
