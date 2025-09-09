@@ -300,27 +300,29 @@ def ultimo_valor(sensor_id):
 @app.route('/add_sensor', methods=['POST'])
 def add_sensor():
     data = request.json
+    print('Datos recibidos en /add_sensor:', data)  # <-- Para depuración
     nombre_sensor = data.get('nombre_sensor')
     referencia = data.get('referencia')
     id_tipo_sensor = data.get('id_tipo_sensor')
+    id_usuario = data.get('id_usuario')  # Nuevo campo obligatorio
     
-    if not (nombre_sensor and referencia and id_tipo_sensor):
+    if not (nombre_sensor and referencia and id_tipo_sensor and id_usuario):
+        print('Faltan datos:', nombre_sensor, referencia, id_tipo_sensor, id_usuario)
         return jsonify({"success": False, "message": "Faltan datos"}), 400
-    
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        query = "INSERT INTO sensores (nombre_sensor, referencia, id_tipo_sensor) VALUES (%s, %s, %s)"
-        cursor.execute(query, (nombre_sensor, referencia, id_tipo_sensor))
+        query = "INSERT INTO sensores (nombre_sensor, referencia, id_tipo_sensor, id_usuario) VALUES (%s, %s, %s, %s)"
+        cursor.execute(query, (nombre_sensor, referencia, id_tipo_sensor, id_usuario))
         conn.commit()
         cursor.close()
         conn.close()
-
+        print('Sensor agregado correctamente')
         return jsonify({"success": True, "message": "Sensor añadido con éxito"}), 201
     except Exception as e:
         print(f"Error en la consulta: {e}")
         return jsonify({"success": False, "message": "Error en la consulta a la base de datos"}), 500
-    
+
 @app.route('/consultar_reportes', methods=['POST'])
 def consultar_reportes():
     data = request.get_json()
@@ -486,6 +488,37 @@ def insertar_medidas():
     except Exception as e:
         print(f"Error al añadir medida: {e}")
         return jsonify({"success": False, "message": "Error al añadir medida"}), 500
+
+@app.route('/sensores_usuario/<int:id_usuario>', methods=['GET'])
+def sensores_usuario(id_usuario):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        query = '''
+            SELECT s.id, s.nombre_sensor, s.referencia, s.id_tipo_sensor, ts.nombre as tipo_sensor, s.id_usuario
+            FROM sensores s
+            JOIN tipo_sensor ts ON s.id_tipo_sensor = ts.id
+            WHERE s.id_usuario = %s
+            ORDER BY s.id DESC
+        '''
+        cur.execute(query, (id_usuario,))
+        sensores = cur.fetchall()
+        data = [
+            {
+                'id': row[0],
+                'nombre_sensor': row[1],
+                'referencia': row[2],
+                'id_tipo_sensor': row[3],
+                'tipo_sensor': row[4],
+                'id_usuario': row[5]
+            } for row in sensores
+        ]
+        cur.close()
+        conn.close()
+        return jsonify(data), 200
+    except Exception as e:
+        print(f"Error al obtener sensores del usuario: {e}")
+        return jsonify({'error': 'No se pudieron obtener los sensores'}), 500
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
