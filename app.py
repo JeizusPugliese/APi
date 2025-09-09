@@ -300,28 +300,29 @@ def ultimo_valor(sensor_id):
 @app.route('/add_sensor', methods=['POST'])
 def add_sensor():
     data = request.json
-    print('Datos recibidos en /add_sensor:', data)  # <-- Para depuración
     nombre_sensor = data.get('nombre_sensor')
     referencia = data.get('referencia')
     id_tipo_sensor = data.get('id_tipo_sensor')
-    id_usuario = data.get('id_usuario')  # Nuevo campo obligatorio
-    
-    if not (nombre_sensor and referencia and id_tipo_sensor and id_usuario):
-        print('Faltan datos:', nombre_sensor, referencia, id_tipo_sensor, id_usuario)
-        return jsonify({"success": False, "message": "Faltan datos"}), 400
+    id_usuario = data.get('id_usuario')
+
+    if not nombre_sensor or not referencia or not id_tipo_sensor or not id_usuario:
+        return jsonify({"message": "Faltan datos"}), 400
+
     try:
         conn = get_connection()
-        cursor = conn.cursor()
-        query = "INSERT INTO sensores (nombre_sensor, referencia, id_tipo_sensor, id_usuario) VALUES (%s, %s, %s, %s)"
-        cursor.execute(query, (nombre_sensor, referencia, id_tipo_sensor, id_usuario))
+        cur = conn.cursor()
+        query = """
+            INSERT INTO sensores (nombre_sensor, referencia, id_tipo_sensor, id_usuario)
+            VALUES (%s, %s, %s, %s)
+        """
+        cur.execute(query, (nombre_sensor, referencia, id_tipo_sensor, id_usuario))
         conn.commit()
-        cursor.close()
+        cur.close()
         conn.close()
-        print('Sensor agregado correctamente')
-        return jsonify({"success": True, "message": "Sensor añadido con éxito"}), 201
+        return jsonify({"message": "Sensor añadido con éxito!"}), 201
     except Exception as e:
-        print(f"Error en la consulta: {e}")
-        return jsonify({"success": False, "message": "Error en la consulta a la base de datos"}), 500
+        print(f"Error al añadir sensor: {e}")
+        return jsonify({"message": "Error al añadir sensor"}), 500
 
 @app.route('/consultar_reportes', methods=['POST'])
 def consultar_reportes():
@@ -522,3 +523,4 @@ def sensores_usuario(id_usuario):
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
