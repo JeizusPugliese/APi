@@ -521,6 +521,33 @@ def sensores_usuario(id_usuario):
         print(f"Error al obtener sensores del usuario: {e}")
         return jsonify({'error': 'No se pudieron obtener los sensores'}), 500
 
+@app.route('/eliminar_sensor/<int:sensor_id>', methods=['DELETE'])
+def eliminar_sensor(sensor_id):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM sensores WHERE id = %s", (sensor_id,))
+        conn.commit()
+        deleted = cur.rowcount
+        cur.close()
+        conn.close()
+        if deleted == 0:
+            return jsonify({"success": False, "message": "Sensor no encontrado"}), 404
+        return jsonify({"success": True, "message": "Sensor eliminado"}), 200
+    except Exception as e:
+        print(f"Error al eliminar sensor: {e}")
+        return jsonify({"success": False, "message": "Error al eliminar sensor"}), 500
+
+@app.route('/toggle_sensor/<int:sensor_id>', methods=['POST'])
+def toggle_sensor(sensor_id):
+    # Simulado: no hay campo 'estado' en DB. Responde OK para la UI.
+    return jsonify({"success": True, "message": "Cambio de estado simulado", "sensor_id": sensor_id}), 200
+
+@app.route('/calibrar_sensor/<int:sensor_id>', methods=['POST'])
+def calibrar_sensor(sensor_id):
+    # Simulado: sin cambios en DB. Responde OK para la UI.
+    return jsonify({"success": True, "message": "Calibración simulada", "sensor_id": sensor_id}), 200
+
 @app.route('/obtener_usuarios_admin', methods=['GET'])
 def obtener_usuarios_admin():
     conn = get_connection()
@@ -530,10 +557,11 @@ def obtener_usuarios_admin():
             SELECT u.id, u.nombre, u.apellido, u.correo, u.celular, r.nombre as rol
             FROM usuarios u
             LEFT JOIN rol r ON u.id_rol = r.id
+            ORDER BY u.nombre ASC, u.apellido ASC
         """
         cursor.execute(query)
         usuarios = cursor.fetchall()
-        print("Usuarios obtenidos:", usuarios)  # <-- Esto ya lo tienes
+        print("Usuarios obtenidos (raw):", usuarios)  # Depuración
 
         usuarios_list = []
         for usuario in usuarios:
@@ -545,7 +573,10 @@ def obtener_usuarios_admin():
                 "celular": usuario[4],
                 "rol": usuario[5]
             })
-        print("usuarios_list:", usuarios_list)  # <-- Agrega este print
+        print("usuarios_list (dict):", usuarios_list)  # Depuración
+
+        if not usuarios_list:
+            print("No hay usuarios en la base de datos o el JOIN no retorna datos.")
         return jsonify({
             "success": True,
             "usuarios": usuarios_list,
@@ -563,5 +594,3 @@ def obtener_usuarios_admin():
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
-
-
