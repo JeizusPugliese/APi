@@ -526,7 +526,6 @@ def obtener_usuarios_admin():
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        # JOIN con la tabla rol para obtener el nombre del rol
         query = """
             SELECT u.id, u.nombre, u.apellido, u.correo, u.celular, r.nombre as rol
             FROM usuarios u
@@ -534,7 +533,8 @@ def obtener_usuarios_admin():
         """
         cursor.execute(query)
         usuarios = cursor.fetchall()
-        
+        print("Usuarios obtenidos:", usuarios)  # <-- Esto ya lo tienes
+
         usuarios_list = []
         for usuario in usuarios:
             usuarios_list.append({
@@ -543,15 +543,16 @@ def obtener_usuarios_admin():
                 "apellido": usuario[2],
                 "correo": usuario[3],
                 "celular": usuario[4],
-                "rol": usuario[5]  # Nombre del rol
+                "rol": usuario[5]
             })
-            
+        print("usuarios_list:", usuarios_list)  # <-- Agrega este print
         return jsonify({
             "success": True,
             "usuarios": usuarios_list,
             "count": len(usuarios_list)
         })
     except Exception as e:
+        print("Error en obtener_usuarios_admin:", e)
         return jsonify({
             "success": False,
             "message": f"Error al obtener usuarios: {str(e)}"
