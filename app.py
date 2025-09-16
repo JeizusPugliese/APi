@@ -520,7 +520,47 @@ def sensores_usuario(id_usuario):
     except Exception as e:
         print(f"Error al obtener sensores del usuario: {e}")
         return jsonify({'error': 'No se pudieron obtener los sensores'}), 500
+
+@app.route('/obtener_usuarios_admin', methods=['GET'])
+def obtener_usuarios_admin():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        # JOIN con la tabla rol para obtener el nombre del rol
+        query = """
+            SELECT u.id, u.nombre, u.apellido, u.correo, u.celular, r.nombre as rol
+            FROM usuarios u
+            LEFT JOIN rol r ON u.id_rol = r.id
+        """
+        cursor.execute(query)
+        usuarios = cursor.fetchall()
+        
+        usuarios_list = []
+        for usuario in usuarios:
+            usuarios_list.append({
+                "id": usuario[0],
+                "nombre": usuario[1],
+                "apellido": usuario[2],
+                "correo": usuario[3],
+                "celular": usuario[4],
+                "rol": usuario[5]  # Nombre del rol
+            })
+            
+        return jsonify({
+            "success": True,
+            "usuarios": usuarios_list,
+            "count": len(usuarios_list)
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Error al obtener usuarios: {str(e)}"
+        }), 500
+    finally:
+        cursor.close()
+        conn.close()
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
