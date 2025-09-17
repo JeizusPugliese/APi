@@ -1,637 +1,449 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-import os
-import psycopg2
-from datetime import datetime, timedelta
-import jwt as pyjwt
+document.addEventListener("DOMContentLoaded", () => {
+    const userRole = localStorage.getItem('userRole');
+    const token = localStorage.getItem('token');
 
-app = Flask(__name__, static_url_path='/static')
-CORS(app, 
-     resources={r"/*": {"origins": "*"}}, 
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+    if (userRole !== 'admin') return;
 
-SECRET_KEY = '12345666'
-port = int(os.environ.get('PORT', 5000))
+    // Cambia a tabla
+    const usuariosTableBody = document.getElementById('usuariosTableBody');
+    const adminUsuarioModal = document.getElementById('adminUsuarioModal');
+    const adminUsuarioNombre = document.getElementById('adminUsuarioNombre');
+    const sensoresUsuarioList = document.getElementById('sensoresUsuarioList');
+    const adminAddSensorForm = document.getElementById('adminAddSensorForm');
+    const adminSensorTipo = document.getElementById('adminSensorTipo');
+    const adminRefreshBtn = document.getElementById('refresh-btn');
+    const topLoader = document.getElementById('topLoader');
+    const totalUsuariosEl = document.getElementById('totalUsuarios');
+    const totalSensoresUsuarioEl = document.getElementById('totalSensoresUsuario');
+    const userSearchInput = document.getElementById('userSearch');
+    const userSearchBtn = document.getElementById('userSearchBtn');
+    let usuarioSeleccionado = { id: null, nombre: '' };
 
-# 🔑 conexión a PostgreSQL en Azure
-def get_connection():
-    return psycopg2.connect(
-        user="JesusPugliese13",  
-        password="Greentech1302",    
-        host="greentech.postgres.database.azure.com",
-        port=5432,
-        database="softcul"           
-    )
-    
+    const setTopLoading = (on) => { if (topLoader) topLoader.classList.toggle('active', !!on); };
 
-revoked_tokens = set()
+    // -- NUEVO: función para cargar usuarios (reutilizable) --
+    async function cargarUsuariosAdmin() {
+        try {
+            setTopLoading(true);
+            usuariosTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center;">Cargando usuarios...</td></tr>';
+            const res = await axios.get('https://apigreentech-e7g6a3e8hbbwdxf8.brazilsouth-01.azurewebsites.net/obtener_usuarios_admin', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!res.data || !Array.isArray(res.data.usuarios)) {
+                usuariosTableBody.innerHTML = '<tr><td colspan="6" style="color:red;">Respuesta inesperada de la API.</td></tr>';
+                if (totalUsuariosEl) totalUsuariosEl.textContent = '0';
+                return;
+            }
+            const usuarios = res.data.usuarios;
+            usuariosTableBody.innerHTML = '';
+            if (usuarios.length === 0) {
+                usuariosTableBody.innerHTML = '<tr><td colspan="3" style="color:#888;text-align:center;">No hay usuarios registrados.</td></tr>';
+            } else {
+                usuarios.forEach(usuario => {
+                    // Oculta admin
+                    if ((usuario.rol || '').toLowerCase() === 'admin') return;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${usuario.nombre}</td>
+                        <td>${usuario.apellido || ''}</td>
+                        <td>
+                          <button class="admin-btn" data-id="${usuario.id}" data-nombre="${usuario.nombre} ${usuario.apellido || ''}">Administrar</button>
+                        </td>
+                    `;
+                    usuariosTableBody.appendChild(tr);
+                });
+            }
+            if (totalUsuariosEl) {
+                // Excluye admins del conteo visual
+                const totalNoAdmins = usuarios.filter(u => (u.rol || '').toLowerCase() !== 'admin').length;
+                totalUsuariosEl.textContent = String(totalNoAdmins);
+            }
+        } catch (err) {
+            let msg = 'Error al cargar usuarios.';
+            if (err.response) {
+                msg += ` [${err.response.status}] ${err.response.statusText}`;
+                if (err.response.data && err.response.data.message) msg += `: ${err.response.data.message}`;
+            } else if (err.request) {
+                msg += ' No se recibió respuesta del servidor.';
+            } else {
+                msg += ' ' + err.message;
+            }
+            usuariosTableBody.innerHTML = `<tr><td colspan="6" style="color:red;">${msg}</td></tr>`;
+            if (totalUsuariosEl) totalUsuariosEl.textContent = '0';
+        } finally {
+            setTopLoading(false);
+        }
+    }
 
-@app.route('/')
-def home():
-    return jsonify({"message": "Bienvenido a la API con PostgreSQL!"})
+    // -- Reemplaza la carga inline por la función --
+    // axios.get(...).then(...).catch(...)  --> sustituido por:
+    cargarUsuariosAdmin();
 
-@app.route('/login', methods=['POST'])
-def login():
-    data = request.json
-    correo = data.get('correo')
-    password = data.get('password')
+    // Cargar tipos de sensor en el select del modal admin
+    async function cargarTipos() {
+        try {
+            const res = await axios.get('https://apigreentech-e7g6a3e8hbbwdxf8.brazilsouth-01.azurewebsites.net/tipo_sensor', {
+                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+            });
+            const tipos = res.data?.data || [];
+            adminSensorTipo.innerHTML = '<option value="" disabled selected>Seleccione tipo</option>';
+            tipos.forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t.id;
+                opt.textContent = `${t.id} - ${t.nombre}`;
+                adminSensorTipo.appendChild(opt);
+            });
+        } catch {
+            adminSensorTipo.innerHTML = '<option value="" disabled selected>Error al cargar tipos</option>';
+        }
+    }
 
-    if not correo or not password:
-        return jsonify({"success": False, "message": "Faltan datos"}), 400
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        query = "SELECT id, nombre, correo, password, id_rol FROM usuarios WHERE correo = %s"
-        cursor.execute(query, (correo,))
-        user = cursor.fetchone()
+    // Render sensores con mejor diseño y botones destacados
+    function renderSensores(sensores = []) {
+        sensoresUsuarioList.innerHTML = '';
+        if (!Array.isArray(sensores) || sensores.length === 0) {
+            sensoresUsuarioList.innerHTML = '<div style="color:#888;text-align:center;">No tiene sensores registrados.</div>';
+            return;
+        }
+        sensores.forEach(sensor => {
+            const estado = sensor.estado && sensor.estado.toLowerCase() === 'on' ? 'Encendido' : 'Apagado';
+            const estadoColor = estado === 'Encendido' ? '#43aa8b' : '#adb5bd';
+            let tiempoEncendido = '--';
+            if (estado === 'Encendido') {
+                const horas = Math.floor(Math.random() * 5) + 1;
+                const minutos = Math.floor(Math.random() * 60);
+                tiempoEncendido = `${horas}h ${minutos}m`;
+            }
+            // Diseño visual mejorado para cada sensor, mostrando el ID
+            const item = document.createElement('div');
+            item.className = 'sensor-admin-item';
+            item.style = `
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 1rem 1.2rem;
+                border-radius: 12px;
+                background: #fff;
+                box-shadow: 0 2px 8px #4361ee12;
+                margin-bottom: 1rem;
+                gap: 1rem;
+            `;
+            item.innerHTML = `
+                <div style="flex:2;display:flex;flex-direction:column;">
+                  <span class="sensor-nombre" style="font-weight:600;font-size:1.08rem;color:#222;">
+                    <span style="color:#888;font-size:0.98rem;font-weight:400;">ID: ${sensor.id}</span>
+                    &nbsp;${sensor.nombre_sensor || 'Sensor'}
+                  </span>
+                  <span style="font-size:0.97rem;color:#4361ee;font-weight:500;">(${sensor.id_tipo_sensor} - ${sensor.tipo_sensor || 'Tipo desconocido'})</span>
+                  <span style="font-size:0.93rem;color:#888;">Ref: <b>${sensor.referencia || '--'}</b></span>
+                </div>
+                <div class="sensor-estado" style="font-weight:700;min-width:90px;text-align:center;color:${estadoColor};font-size:1.01rem;">
+                  ${estado}
+                </div>
+                <div style="font-size:0.92rem;color:#888;min-width:120px;">Tiempo encendido: <span>${tiempoEncendido}</span></div>
+                <div style="display:flex;gap:0.5rem;">
+                  <button class="btn-toggle-sensor btn" data-id="${sensor.id}" title="Encender/Apagar" style="background:#4361ee;color:#fff;transition:background 0.2s;padding:0.5rem 0.8rem;border-radius:7px;"><i class="fas fa-power-off"></i></button>
+                  <button class="btn-calibrar-sensor btn" data-id="${sensor.id}" title="Calibrar" style="background:#ffd166;color:#222;transition:background 0.2s;padding:0.5rem 0.8rem;border-radius:7px;"><i class="fas fa-tools"></i></button>
+                  <button class="btn-eliminar-sensor btn" data-id="${sensor.id}" title="Eliminar" style="background:#e63946;color:#fff;transition:background 0.2s;padding:0.5rem 0.8rem;border-radius:7px;"><i class="fas fa-trash"></i></button>
+                </div>
+            `;
+            sensoresUsuarioList.appendChild(item);
+        });
+    }
 
-        if user:
-            user_id, nombre, correo_db, password_db, id_rol = user
-            if password_db == password:
-                token = pyjwt.encode({
-                    'id': user_id,
-                    'exp': datetime.utcnow() + timedelta(hours=1)
-                }, SECRET_KEY, algorithm='HS256')
+    // Función para renderizar sensores del usuario en el modal de administración
+    function renderSensoresUsuario(sensores) {
+        const contenedor = document.getElementById('sensoresUsuarioList');
+        contenedor.innerHTML = '';
+        if (!sensores || sensores.length === 0) {
+            contenedor.innerHTML = '<div style="text-align:center;color:#888;">No hay sensores asignados a este usuario.</div>';
+            return;
+        }
+        sensores.forEach(sensor => {
+            // Estado visual
+            const online = sensor.estado && sensor.estado.toLowerCase() === 'online';
+            const colorEstado = online ? '#43aa8b' : '#adb5bd';
+            const textoEstado = online ? 'Online' : 'Offline';
+            const tiempoEncendido = sensor.tiempo_encendido !== undefined && sensor.tiempo_encendido !== null
+                ? `${sensor.tiempo_encendido} min`
+                : '--';
 
-                cursor.execute("SELECT nombre FROM rol WHERE id = %s", (id_rol,))
-                rol = cursor.fetchone()[0]
+            const div = document.createElement('div');
+            div.className = 'admin-sensor-row';
+            div.style = 'display:flex;align-items:center;gap:1.2rem;padding:0.7rem 0;border-bottom:1px solid #eee;';
+            div.innerHTML = `
+                <div style="flex:1;">
+                    <b>${sensor.nombre_sensor}</b> <span style="color:#888;font-size:0.95em;">(${sensor.tipo_sensor})</span>
+                    <div style="font-size:0.95em;color:#888;">Ref: ${sensor.referencia || '—'}</div>
+                </div>
+                <div style="text-align:center;">
+                    <span class="dot" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${colorEstado};margin-right:6px;"></span>
+                    <span style="font-weight:600;color:${colorEstado};">${textoEstado}</span>
+                    <div style="font-size:0.85em;color:#43aa8b;">Encendido: ${tiempoEncendido}</div>
+                </div>
+                <div style="display:flex;gap:0.5rem;">
+                  <button class="btn-toggle-sensor btn" data-id="${sensor.id}" title="Encender/Apagar" style="background:#4361ee;color:#fff;transition:background 0.2s;padding:0.5rem 0.8rem;border-radius:7px;"><i class="fas fa-power-off"></i></button>
+                  <button class="btn-calibrar-sensor btn" data-id="${sensor.id}" title="Calibrar" style="background:#ffd166;color:#222;transition:background 0.2s;padding:0.5rem 0.8rem;border-radius:7px;"><i class="fas fa-tools"></i></button>
+                  <button class="btn-eliminar-sensor btn" data-id="${sensor.id}" title="Eliminar" style="background:#e63946;color:#fff;transition:background 0.2s;padding:0.5rem 0.8rem;border-radius:7px;"><i class="fas fa-trash"></i></button>
+                </div>
+            `;
+            contenedor.appendChild(div);
+        });
+    }
 
-                cursor.close()
-                conn.close()
+    // --- Filtro local de usuarios ---
+    function filtrarUsuarios(term) {
+        const t = (term || '').toLowerCase().trim();
+        const rows = usuariosTableBody.querySelectorAll('tr');
+        rows.forEach(row => {
+            const nombre = (row.cells[0]?.textContent || '').toLowerCase();
+            const apellido = (row.cells[1]?.textContent || '').toLowerCase();
+            row.style.display = (nombre.includes(t) || apellido.includes(t)) ? '' : 'none';
+        });
+    }
+    if (userSearchInput) userSearchInput.addEventListener('input', (e) => filtrarUsuarios(e.target.value));
+    if (userSearchBtn && userSearchInput) userSearchBtn.addEventListener('click', () => filtrarUsuarios(userSearchInput.value));
 
-                return jsonify({
-                    "success": True,
-                    "token": token,
-                    "rol": rol,
-                    "id": user_id,
-                    "nombre": nombre
-                }), 200
-            else:
-                return jsonify({"success": False, "message": "Contraseña incorrecta"}), 401
-        else:
-            return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
+    // --- Actualización en tiempo real del modal de administración ---
+    let adminSensorInterval = null;
+    function iniciarActualizacionSensoresUsuario() {
+        if (adminSensorInterval) clearInterval(adminSensorInterval);
+        adminSensorInterval = setInterval(() => {
+            if (adminUsuarioModal && getComputedStyle(adminUsuarioModal).display !== 'none' && usuarioSeleccionado.id) {
+                cargarSensoresUsuario(usuarioSeleccionado.id);
+            }
+        }, 10000); // cada 10 segundos
+    }
+    function detenerActualizacionSensoresUsuario() {
+        if (adminSensorInterval) clearInterval(adminSensorInterval);
+    }
 
-    except Exception as e:
-        print(f"Error en la consulta: {e}")
-        return jsonify({"success": False, "message": "Error en la consulta a la base de datos"}), 500
+    // Abrir modal administrar usuario
+    usuariosTableBody.addEventListener('click', async (e) => {
+        const btn = e.target.closest('.admin-btn');
+        if (!btn) return;
+        const id = btn.getAttribute('data-id');
+        const nombre = btn.getAttribute('data-nombre');
+        usuarioSeleccionado = { id, nombre };
+        adminUsuarioNombre.textContent = nombre;
+        sensoresUsuarioList.innerHTML = '<div style="text-align:center;">Cargando sensores...</div>';
+        adminUsuarioModal.style.display = 'flex';
+        await cargarTipos();
+        await cargarSensoresUsuario(id);
+        iniciarActualizacionSensoresUsuario();
+    });
 
-@app.route('/logout', methods=['POST'])
-def logout():
-    token = request.headers.get('Authorization')
-    print(f"Token recibido: {token}")  # Para depuración
-    
-    if not token or not verificar_token(token):
-        return jsonify({'error': 'Unauthorized'}), 401
-    
-    # Revocar el token
-    if token.startswith("Bearer "):
-        token = token.split(" ")[1]
-    
-    revoked_tokens.add(token)  # Agregar a la lista de revocación
-    return jsonify({'message': 'Sesión cerrada con éxito'}), 200
+    // Cerrar modal
+    window.cerrarAdminUsuarioModal = function() {
+        adminUsuarioModal.style.display = 'none';
+        detenerActualizacionSensoresUsuario();
+    };
+    adminUsuarioModal.addEventListener('click', (e) => {
+        if (e.target === adminUsuarioModal) {
+            adminUsuarioModal.style.display = 'none';
+            detenerActualizacionSensoresUsuario();
+        }
+    });
 
-def verificar_token(token):
-    try:
-        if token.startswith("Bearer "):
-            token = token.split(" ")[1]
-        
-        # Decodificar el token
-        payload = pyjwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-        
-        # Verificar si el token está en la lista de revocación
-        if token in revoked_tokens:
-            print("Token revocado")
-            return False
-        
-        print("Token válido:", payload)
-        return True
-    except pyjwt.ExpiredSignatureError:
-        print("El token ha expirado")
-        return False
-    except pyjwt.InvalidTokenError:
-        print("Token inválido")
-        return False
+    // Cargar sensores de un usuario
+    async function cargarSensoresUsuario(userId) {
+        setTopLoading(true);
+        sensoresUsuarioList.innerHTML = '<div style="text-align:center;">Cargando sensores...</div>';
+        try {
+            const res = await axios.get(`https://apigreentech-e7g6a3e8hbbwdxf8.brazilsouth-01.azurewebsites.net/sensores_usuario/${userId}`, {
+                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+            });
+            renderSensores(res.data);
+            renderSensoresUsuario(res.data);
+            if (totalSensoresUsuarioEl) totalSensoresUsuarioEl.textContent = String(Array.isArray(res.data) ? res.data.length : 0);
+        } catch (err) {
+            sensoresUsuarioList.innerHTML = '<div style="color:red;text-align:center;">Error al cargar sensores.</div>';
+            if (totalSensoresUsuarioEl) totalSensoresUsuarioEl.textContent = '0';
+        } finally {
+            setTopLoading(false);
+        }
+    }
 
-@app.route('/verificar_token', methods=['POST'])
-def verificar_token_route():
-    token = request.headers.get('Authorization')
+    // -- Botón Actualizar (recarga usuarios o sensores del modal) --
+    if (adminRefreshBtn) {
+        adminRefreshBtn.addEventListener('click', async () => {
+            const icon = adminRefreshBtn.querySelector('i');
+            adminRefreshBtn.disabled = true;
+            if (icon) icon.classList.add('fa-spin');
+            setTopLoading(true);
+            try {
+                const modalAbierto = adminUsuarioModal && getComputedStyle(adminUsuarioModal).display !== 'none';
+                if (modalAbierto && usuarioSeleccionado.id) {
+                    await cargarSensoresUsuario(usuarioSeleccionado.id);
+                } else {
+                    await cargarUsuariosAdmin();
+                }
+                const lastUpdate = document.getElementById('last-update-text');
+                if (lastUpdate) {
+                    const ahora = new Date();
+                    lastUpdate.textContent = `Última actualización: ${ahora.toLocaleTimeString()}`;
+                }
+            } finally {
+                setTimeout(() => {
+                    adminRefreshBtn.disabled = false;
+                    if (icon) icon.classList.remove('fa-spin');
+                    setTopLoading(false);
+                }, 300);
+            }
+        });
+    }
 
-    if not token:
-        return jsonify({'success': False, 'message': 'Token no proporcionado'}), 401
+    // Cargar tipos de sensor en el select del modal admin
+    async function cargarTipos() {
+        try {
+            const res = await axios.get('https://apigreentech-e7g6a3e8hbbwdxf8.brazilsouth-01.azurewebsites.net/tipo_sensor', {
+                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+            });
+            const tipos = res.data?.data || [];
+            adminSensorTipo.innerHTML = '<option value="" disabled selected>Seleccione tipo</option>';
+            tipos.forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t.id;
+                opt.textContent = `${t.id} - ${t.nombre}`;
+                adminSensorTipo.appendChild(opt);
+            });
+        } catch {
+            adminSensorTipo.innerHTML = '<option value="" disabled selected>Error al cargar tipos</option>';
+        }
+    }
 
-    if verificar_token(token):
-        return jsonify({'success': True, 'message': 'Token válido'}), 200
-    else:
-        return jsonify({'success': False, 'message': 'Token inválido o expirado'}), 401
+    // Agregar sensor desde el modal admin (con referencia obligatoria)
+    if (adminAddSensorForm) {
+        adminAddSensorForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const nombre = document.getElementById('adminSensorName').value.trim();
+            const tipo = adminSensorTipo.value;
+            const referencia = document.getElementById('adminSensorRef').value;
+            if (!usuarioSeleccionado.id) {
+                Swal.fire('Error', 'Usuario no seleccionado', 'error');
+                return;
+            }
+            if (!nombre || !tipo || !referencia) {
+                Swal.fire('Error', 'Todos los campos son obligatorios', 'error');
+                return;
+            }
+            try {
+                setTopLoading(true);
+                await axios.post('https://apigreentech-e7g6a3e8hbbwdxf8.brazilsouth-01.azurewebsites.net/add_sensor', {
+                    nombre_sensor: nombre,
+                    referencia: referencia,
+                    id_tipo_sensor: Number(tipo),
+                    id_usuario: Number(usuarioSeleccionado.id)
+                }, {
+                    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+                });
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Sensor agregado',
+                    showConfirmButton: false,
+                    timer: 1200
+                });
+                adminAddSensorForm.reset();
+                await cargarSensoresUsuario(usuarioSeleccionado.id);
+            } catch (err) {
+                Swal.fire('Error', 'No se pudo agregar el sensor', 'error');
+            } finally {
+                setTopLoading(false);
+            }
+        });
+    }
 
-@app.route('/crear_usuario', methods=['POST'])
-def crear_usuario():
-    data = request.json
-    correo = data['correo']
-    
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM usuarios WHERE correo = %s", (correo,))
-    existing_user = cursor.fetchone()
-    
-    if existing_user:
-        cursor.close()
-        conn.close()
-        return jsonify({'error': 'El correo ya está registrado'}), 409
-    
-    # Insertar nuevo usuario
-    nombre = data['nombre']
-    apellido = data['apellido']
-    password = data['password']
-    celular = data['celular']
-    rol = data['rol']
-    cursor.execute("INSERT INTO usuarios (nombre, apellido, correo, password, celular, id_rol) VALUES (%s, %s, %s, %s, %s, %s)", 
-                (nombre, apellido, correo, password, celular, rol))
-    conn.commit()
-    cursor.close()
-    conn.close()
-    
-    return jsonify({'message': 'Usuario creado exitosamente'}), 201
+    // Cerrar modal
+    window.cerrarAdminUsuarioModal = function() {
+        adminUsuarioModal.style.display = 'none';
+    };
+    adminUsuarioModal.addEventListener('click', (e) => {
+        if (e.target === adminUsuarioModal) adminUsuarioModal.style.display = 'none';
+    });
 
-@app.route('/obtener_usuarios', methods=['GET'])
-def obtener_usuarios():
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        # Incluir todos los campos necesarios: id, nombre, apellido, correo, celular, id_rol
-        query = "SELECT id, nombre, apellido, correo, celular, id_rol FROM usuarios"
-        cursor.execute(query)
-        usuarios = cursor.fetchall()
-        
-        usuarios_list = []
-        for usuario in usuarios:
-            usuarios_list.append({
-                "id": usuario[0],
-                "nombre": usuario[1],
-                "apellido": usuario[2],
-                "correo": usuario[3],
-                "celular": usuario[4],
-                "rol": usuario[5]  
-            })
-            
-        return jsonify({
-            "success": True,
-            "usuarios": usuarios_list,
-            "count": len(usuarios_list)
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": f"Error al obtener usuarios: {str(e)}"
-        }), 500
-    finally:
-        cursor.close()
-        conn.close()
+    // Acciones dentro del modal (encender/apagar/calibrar/eliminar)
+    sensoresUsuarioList.addEventListener('click', async (e) => {
+        const btnToggle = e.target.closest('.btn-toggle-sensor');
+        const btnCalibrar = e.target.closest('.btn-calibrar-sensor');
+        const btnEliminar = e.target.closest('.btn-eliminar-sensor');
+        if (btnToggle) {
+            const sensorId = btnToggle.getAttribute('data-id');
+            btnToggle.classList.add('fa-spin');
+            try {
+                setTopLoading(true);
+                await axios.post(`https://apigreentech-e7g6a3e8hbbwdxf8.brazilsouth-01.azurewebsites.net/toggle_sensor/${sensorId}`, {}, {
+                    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+                });
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Estado actualizado',
+                    showConfirmButton: false,
+                    timer: 1000
+                });
+                await cargarSensoresUsuario(usuarioSeleccionado.id);
+            } catch (err) {
+                Swal.fire('Error', 'No se pudo cambiar el estado', 'error');
+            } finally {
+                btnToggle.classList.remove('fa-spin');
+                setTopLoading(false);
+            }
+        }
+        if (btnCalibrar) {
+            const sensorId = btnCalibrar.getAttribute('data-id');
+            btnCalibrar.classList.add('fa-spin');
+            try {
+                setTopLoading(true);
+                await axios.post(`https://apigreentech-e7g6a3e8hbbwdxf8.brazilsouth-01.azurewebsites.net/calibrar_sensor/${sensorId}`, {}, {
+                    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+                });
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Sensor calibrado',
+                    showConfirmButton: false,
+                    timer: 1000
+                });
+            } catch (err) {
+                Swal.fire('Error', 'No se pudo calibrar el sensor', 'error');
+            } finally {
+                btnCalibrar.classList.remove('fa-spin');
+                setTopLoading(false);
+            }
+        }
+        if (btnEliminar) {
+            const sensorId = btnEliminar.getAttribute('data-id');
+            btnEliminar.classList.add('fa-spin');
+            const confirm = await Swal.fire({
+                title: '¿Eliminar sensor?',
+                text: 'Esta acción no se puede deshacer',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Sí, eliminar',
+                cancelButtonText: 'Cancelar'
+            });
+            if (!confirm.isConfirmed) {
+                btnEliminar.classList.remove('fa-spin');
+                return;
+            }
+            try {
+                setTopLoading(true);
+                await axios.delete(`https://apigreentech-e7g6a3e8hbbwdxf8.brazilsouth-01.azurewebsites.net/eliminar_sensor/${sensorId}`, {
+                    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+                });
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Sensor eliminado',
+                    showConfirmButton: false,
+                    timer: 1000
+                });
+                await cargarSensoresUsuario(usuarioSeleccionado.id);
+            } catch (err) {
+                Swal.fire('Error', 'No se pudo eliminar el sensor', 'error');
+            } finally {
+                btnEliminar.classList.remove('fa-spin');
+                setTopLoading(false);
+            }
+        }
+    });
 
-@app.route('/obtener_usuario/<correo>', methods=['GET'])
-def obtener_usuario(correo):
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = "SELECT nombre, apellido, correo, password, celular FROM usuarios WHERE correo = %s"
-    cursor.execute(query, (correo,))
-    usuario = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    
-    if usuario:
-        return jsonify({"success": True, "usuario": {
-            "nombre": usuario[0],
-            "apellido": usuario[1],
-            "correo": usuario[2],
-            "password": usuario[3],
-            "celular": usuario[4]
-        }})
-    else:
-        return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
-
-@app.route('/actualizar_usuario', methods=['PUT'])
-def actualizar_usuario():
-    data = request.json
-    nombre = data.get('nombre')
-    apellido = data.get('apellido')
-    correo = data.get('correo')
-    password = data.get('password')
-    celular = data.get('celular')
-    
-    if not all([nombre, apellido, correo, celular]):
-        return jsonify({"success": False, "message": "Todos los campos son requeridos"}), 400
-    
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        query = """
-            UPDATE usuarios 
-            SET nombre = %s, apellido = %s, password = %s, celular = %s
-            WHERE correo = %s
-        """
-        cursor.execute(query, (nombre, apellido, password, celular, correo))
-        conn.commit()
-        
-        if cursor.rowcount == 0:
-            cursor.close()
-            conn.close()
-            return jsonify({"success": False, "message": "No se encontró el usuario"}), 404
-        
-        cursor.close()
-        conn.close()
-        return jsonify({"success": True, "message": "Usuario actualizado"})
-    
-    except Exception as e:
-        conn.rollback()
-        print(f"Error al actualizar el usuario: {e}")
-        return jsonify({"success": False, "message": "Error al actualizar el usuario"}), 500
-
-@app.route('/eliminar_usuario/<correo>', methods=['DELETE'])
-def eliminar_usuario(correo):
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = "DELETE FROM usuarios WHERE correo = %s"
-    cursor.execute(query, (correo,))
-    conn.commit()
-    rowcount = cursor.rowcount
-    cursor.close()
-    conn.close()
-    
-    if rowcount == 0:  
-        return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
-
-    return jsonify({"success": True, "message": "Usuario eliminado"}), 200
-
-@app.route('/tipo_sensor', methods=['GET'])
-def get_tipo_sensores():
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        query = "SELECT * FROM tipo_sensor"
-        cursor.execute(query)
-        tipos = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        tipo_sensor_list = [{"id": t[0], "nombre": t[1]} for t in tipos]
-        return jsonify({"success": True, "data": tipo_sensor_list}), 200
-    except Exception as e:
-        print(f"Error al obtener tipos de sensores: {e}")
-        return jsonify({"success": False, "message": "Error al obtener tipos de sensores"}), 500
-
-@app.route('/ultimo_valor/<int:sensor_id>', methods=['GET'])
-def ultimo_valor(sensor_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = "SELECT valor_de_la_medida FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1"
-    cursor.execute(query, (sensor_id,))
-    resultado = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    
-    if resultado:
-        return jsonify({'valor': resultado[0]})
-    else:
-        return jsonify({'valor': 'No hay datos disponibles'}), 404
-
-@app.route('/add_sensor', methods=['POST'])
-def add_sensor():
-    data = request.json
-    nombre_sensor = data.get('nombre_sensor')
-    referencia = data.get('referencia')
-    id_tipo_sensor = data.get('id_tipo_sensor')
-    id_usuario = data.get('id_usuario')
-
-    if not nombre_sensor or not referencia or not id_tipo_sensor or not id_usuario:
-        return jsonify({"message": "Faltan datos"}), 400
-
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        query = """
-            INSERT INTO sensores (nombre_sensor, referencia, id_tipo_sensor, id_usuario)
-            VALUES (%s, %s, %s, %s)
-        """
-        cur.execute(query, (nombre_sensor, referencia, id_tipo_sensor, id_usuario))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Sensor añadido con éxito!"}), 201
-    except Exception as e:
-        print(f"Error al añadir sensor: {e}")
-        return jsonify({"message": "Error al añadir sensor"}), 500
-
-@app.route('/consultar_reportes', methods=['POST'])
-def consultar_reportes():
-    data = request.get_json()
-
-    fecha_inicio = data.get('fechaInicio')
-    fecha_fin = data.get('fechaFin')
-    nombre_sensor = data.get('nombreSensor')
-    
-    try:
-        # Conversión de fechas de string a formato datetime
-        fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
-        fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d')
-
-        conn = get_connection()
-        cur = conn.cursor()
-
-        # Consulta a la base de datos para obtener los resultados dentro del rango de fechas
-        query = '''
-            SELECT s.nombre_sensor, m.fecha, m.valor_de_la_medida
-            FROM medidas m
-            JOIN sensores s ON m.id_sensor = s.id
-            WHERE s.nombre_sensor = %s
-            AND m.fecha BETWEEN %s AND %s
-        '''
-        cur.execute(query, (nombre_sensor, fecha_inicio_dt, fecha_fin_dt))
-        resultados = cur.fetchall()
-
-        # Estructura de los resultados en formato JSON
-        data = []
-        for row in resultados:
-            data.append({
-                'nombreSensor': row[0],  # Nombre del sensor
-                'fecha': row[1].strftime('%Y-%m-%d %H:%M:%S'),  # Formato de la fecha
-                'valor': row[2]  # Valor de la medida
-            })
-
-        cur.close()
-        conn.close()
-
-        return jsonify(data), 200
-
-    except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({'error': 'No se pudieron obtener los datos'}), 500
-
-@app.route('/sensores_todos', methods=['GET'])
-def obtener_todos_los_sensores():
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        query = """
-            SELECT s.nombre_sensor, m.fecha, m.valor_de_la_medida
-            FROM medidas m
-            JOIN sensores s ON m.id_sensor = s.id
-            ORDER BY m.fecha DESC
-        """
-        cur.execute(query)
-        resultados = cur.fetchall()
-
-        # Formatear los resultados con los índices correctos
-        data = [{'sensor': row[0], 'fecha': row[1].strftime('%Y-%m-%d %H:%M:%S'), 'valor': row[2]} for row in resultados]
-
-        cur.close()
-        conn.close()
-        return jsonify(data), 200
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/historial')
-def mostrar_historial():
-    sensor_id = request.args.get('sensor')
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = "SELECT valor_de_la_medida, fecha FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC"
-    cursor.execute(query, (sensor_id,))
-    historial = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    
-    # Convertir los resultados a una lista de diccionarios
-    historial_json = [{'valor': h[0], 'fecha': h[1]} for h in historial]
-    
-    # Retornar los datos en formato JSON
-    return jsonify(historial_json)
-
-@app.route('/add_card', methods=['POST'])
-def add_card():
-    user_id = request.json.get('user_id')
-    card_name = request.json.get('card_name')
-    iframe_url = request.json.get('iframe_url')
-
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO tarjetas (nombre, iframe_url, id_usuario) VALUES (%s, %s, %s)", 
-                       (card_name, iframe_url, user_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        return jsonify({'message': 'Tarjeta añadida con éxito!'}), 201
-    except Exception as e:
-        print(f"Error al añadir tarjeta: {e}")
-        return jsonify({'message': 'Error al añadir tarjeta'}), 500
-
-@app.route('/get_tarjetas/<int:user_id>', methods=['GET'])
-def get_tarjetas(user_id):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT nombre, iframe_url FROM tarjetas WHERE id_usuario = %s", (user_id,))
-        tarjetas = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        return jsonify(tarjetas), 200
-    except Exception as e:
-        print(f"Error en la consulta: {e}")
-        return jsonify({"message": "Error en la consulta a la base de datos"}), 500
-
-@app.route('/insertar_medidas', methods=['POST'])
-def insertar_medidas():
-    data = request.json 
-    nombre_sensor = data.get('nombre_sensor') 
-    nombre_usuario = data.get('nombre_usuario') 
-    valor_de_la_medida = data.get('valor_de_la_medida')
-
-    if nombre_sensor is None or nombre_usuario is None or valor_de_la_medida is None:
-        return jsonify({"success": False, "message": "Faltan datos"}), 400
-
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        query_sensor = "SELECT id FROM sensores WHERE nombre_sensor = %s"
-        cursor.execute(query_sensor, (nombre_sensor,))
-        sensor = cursor.fetchone()
-        
-        if not sensor:
-            cursor.close()
-            conn.close()
-            return jsonify({"success": False, "message": "Sensor no encontrado"}), 404
-        id_sensor = sensor[0]
-
-        query_usuario = "SELECT id FROM usuarios WHERE nombre = %s"
-        cursor.execute(query_usuario, (nombre_usuario,))
-        usuario = cursor.fetchone()
-
-        if not usuario:
-            cursor.close()
-            conn.close()
-            return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
-        id_usuarios = usuario[0]
-
-        query = "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida) VALUES (%s, %s, %s)"
-        cursor.execute(query, (id_sensor, id_usuarios, valor_de_la_medida))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        return jsonify({"success": True, "message": "Medida añadida con éxito"}), 201
-    except Exception as e:
-        print(f"Error al añadir medida: {e}")
-        return jsonify({"success": False, "message": "Error al añadir medida"}), 500
-
-@app.route('/sensores_usuario/<int:id_usuario>', methods=['GET'])
-def sensores_usuario(id_usuario):
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        query = '''
-            SELECT s.id, s.nombre_sensor, s.referencia, s.id_tipo_sensor, ts.nombre as tipo_sensor, s.id_usuario
-            FROM sensores s
-            JOIN tipo_sensor ts ON s.id_tipo_sensor = ts.id
-            WHERE s.id_usuario = %s
-            ORDER BY s.id DESC
-        '''
-        cur.execute(query, (id_usuario,))
-        sensores = cur.fetchall()
-        data = []
-        for row in sensores:
-            sensor_id = row[0]
-            # Última medida
-            cur.execute(
-                "SELECT valor_de_la_medida, fecha FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1",
-                (sensor_id,)
-            )
-            medida = cur.fetchone()
-            if medida:
-                valor = medida[0]
-                ultimo_dato = medida[1].strftime('%Y-%m-%d %H:%M:%S')
-                from datetime import datetime, timedelta
-                ahora = datetime.utcnow()
-                # Estado: Online si la última medida es de los últimos 10 minutos
-                online = (medida[1] and (ahora - medida[1]).total_seconds() < 600)
-                estado = "Online" if online else "Offline"
-                # Calcular tiempo encendido desde el último cambio a Online
-                if online:
-                    # Buscar la última vez que estuvo Offline antes de ahora
-                    cur.execute(
-                        "SELECT fecha FROM medidas WHERE id_sensor = %s AND fecha < %s ORDER BY fecha DESC LIMIT 1",
-                        (sensor_id, medida[1])
-                    )
-                    ultima_offline = cur.fetchone()
-                    if ultima_offline:
-                        tiempo_encendido = ahora - ultima_offline[0]
-                    else:
-                        tiempo_encendido = ahora - medida[1]
-                    tiempo_encendido_min = int(tiempo_encendido.total_seconds() // 60)
-                else:
-                    tiempo_encendido_min = 0
-            else:
-                valor = None
-                ultimo_dato = None
-                estado = "Offline"
-                tiempo_encendido_min = 0
-            data.append({
-                'id': row[0],
-                'nombre_sensor': row[1],
-                'referencia': row[2],
-                'id_tipo_sensor': row[3],
-                'tipo_sensor': row[4],
-                'id_usuario': row[5],
-                'valor': valor,
-                'ultimo_dato': ultimo_dato,
-                'estado': estado,
-                'tiempo_encendido': tiempo_encendido_min
-            })
-        cur.close()
-        conn.close()
-        return jsonify(data), 200
-    except Exception as e:
-        print(f"Error al obtener sensores del usuario: {e}")
-        return jsonify({'error': 'No se pudieron obtener los sensores'}), 500
-
-@app.route('/eliminar_sensor/<int:sensor_id>', methods=['DELETE'])
-def eliminar_sensor(sensor_id):
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM sensores WHERE id = %s", (sensor_id,))
-        conn.commit()
-        deleted = cur.rowcount
-        cur.close()
-        conn.close()
-        if deleted == 0:
-            return jsonify({"success": False, "message": "Sensor no encontrado"}), 404
-        return jsonify({"success": True, "message": "Sensor eliminado"}), 200
-    except Exception as e:
-        print(f"Error al eliminar sensor: {e}")
-        return jsonify({"success": False, "message": "Error al eliminar sensor"}), 500
-
-@app.route('/toggle_sensor/<int:sensor_id>', methods=['POST'])
-def toggle_sensor(sensor_id):
-    # Simulado: no hay campo 'estado' en DB. Responde OK para la UI.
-    return jsonify({"success": True, "message": "Cambio de estado simulado", "sensor_id": sensor_id}), 200
-
-@app.route('/calibrar_sensor/<int:sensor_id>', methods=['POST'])
-def calibrar_sensor(sensor_id):
-    # Simulado: sin cambios en DB. Responde OK para la UI.
-    return jsonify({"success": True, "message": "Calibración simulada", "sensor_id": sensor_id}), 200
-
-@app.route('/obtener_usuarios_admin', methods=['GET'])
-def obtener_usuarios_admin():
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        query = """
-            SELECT u.id, u.nombre, u.apellido, u.correo, u.celular, r.nombre as rol
-            FROM usuarios u
-            LEFT JOIN rol r ON u.id_rol = r.id
-            ORDER BY u.nombre ASC, u.apellido ASC
-        """
-        cursor.execute(query)
-        usuarios = cursor.fetchall()
-        print("Usuarios obtenidos (raw):", usuarios)  # Depuración
-
-        usuarios_list = []
-        for usuario in usuarios:
-            usuarios_list.append({
-                "id": usuario[0],
-                "nombre": usuario[1],
-                "apellido": usuario[2],
-                "correo": usuario[3],
-                "celular": usuario[4],
-                "rol": usuario[5]
-            })
-        print("usuarios_list (dict):", usuarios_list)  # Depuración
-
-        if not usuarios_list:
-            print("No hay usuarios en la base de datos o el JOIN no retorna datos.")
-        return jsonify({
-            "success": True,
-            "usuarios": usuarios_list,
-            "count": len(usuarios_list)
-        })
-    except Exception as e:
-        print("Error en obtener_usuarios_admin:", e)
-        return jsonify({
-            "success": False,
-            "message": f"Error al obtener usuarios: {str(e)}"
-        }), 500
-    finally:
-        cursor.close()
-        conn.close()
-    
-if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=port)
-
-
+    console.log("¿usuariosTableBody existe?", document.getElementById('usuariosTableBody'));
+});
