@@ -504,16 +504,37 @@ def sensores_usuario(id_usuario):
         '''
         cur.execute(query, (id_usuario,))
         sensores = cur.fetchall()
-        data = [
-            {
+        data = []
+        for row in sensores:
+            sensor_id = row[0]
+            # Obtener último valor y fecha para cada sensor
+            cur.execute(
+                "SELECT valor_de_la_medida, fecha FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1",
+                (sensor_id,)
+            )
+            medida = cur.fetchone()
+            if medida:
+                valor = medida[0]
+                ultimo_dato = medida[1].strftime('%Y-%m-%d %H:%M:%S')
+                # Considera "Online" si la última medida es de los últimos 10 minutos
+                from datetime import datetime, timedelta
+                ahora = datetime.utcnow()
+                estado = "Online" if (medida[1] and (ahora - medida[1]).total_seconds() < 600) else "Offline"
+            else:
+                valor = None
+                ultimo_dato = None
+                estado = "Offline"
+            data.append({
                 'id': row[0],
                 'nombre_sensor': row[1],
                 'referencia': row[2],
                 'id_tipo_sensor': row[3],
                 'tipo_sensor': row[4],
-                'id_usuario': row[5]
-            } for row in sensores
-        ]
+                'id_usuario': row[5],
+                'valor': valor,
+                'ultimo_dato': ultimo_dato,
+                'estado': estado
+            })
         cur.close()
         conn.close()
         return jsonify(data), 200
@@ -594,3 +615,5 @@ def obtener_usuarios_admin():
     
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
+
