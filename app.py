@@ -507,7 +507,7 @@ def sensores_usuario(id_usuario):
         data = []
         for row in sensores:
             sensor_id = row[0]
-            # Obtener último valor y fecha para cada sensor
+            # Última medida
             cur.execute(
                 "SELECT valor_de_la_medida, fecha FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1",
                 (sensor_id,)
@@ -516,14 +516,31 @@ def sensores_usuario(id_usuario):
             if medida:
                 valor = medida[0]
                 ultimo_dato = medida[1].strftime('%Y-%m-%d %H:%M:%S')
-                # Considera "Online" si la última medida es de los últimos 10 minutos
                 from datetime import datetime, timedelta
                 ahora = datetime.utcnow()
-                estado = "Online" if (medida[1] and (ahora - medida[1]).total_seconds() < 600) else "Offline"
+                # Estado: Online si la última medida es de los últimos 10 minutos
+                online = (medida[1] and (ahora - medida[1]).total_seconds() < 600)
+                estado = "Online" if online else "Offline"
+                # Calcular tiempo encendido desde el último cambio a Online
+                if online:
+                    # Buscar la última vez que estuvo Offline antes de ahora
+                    cur.execute(
+                        "SELECT fecha FROM medidas WHERE id_sensor = %s AND fecha < %s ORDER BY fecha DESC LIMIT 1",
+                        (sensor_id, medida[1])
+                    )
+                    ultima_offline = cur.fetchone()
+                    if ultima_offline:
+                        tiempo_encendido = ahora - ultima_offline[0]
+                    else:
+                        tiempo_encendido = ahora - medida[1]
+                    tiempo_encendido_min = int(tiempo_encendido.total_seconds() // 60)
+                else:
+                    tiempo_encendido_min = 0
             else:
                 valor = None
                 ultimo_dato = None
                 estado = "Offline"
+                tiempo_encendido_min = 0
             data.append({
                 'id': row[0],
                 'nombre_sensor': row[1],
@@ -533,7 +550,8 @@ def sensores_usuario(id_usuario):
                 'id_usuario': row[5],
                 'valor': valor,
                 'ultimo_dato': ultimo_dato,
-                'estado': estado
+                'estado': estado,
+                'tiempo_encendido': tiempo_encendido_min
             })
         cur.close()
         conn.close()
