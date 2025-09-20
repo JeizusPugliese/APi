@@ -516,14 +516,30 @@ def sensores_usuario(id_usuario):
             if medida:
                 valor = medida[0]
                 fecha_ultima = medida[1]
-                ultimo_dato = fecha_ultima.strftime('%Y-%m-%d %H:%M:%S')
                 from datetime import datetime, timedelta
                 ahora = datetime.utcnow()
                 # Estado: Online si la última medida es de los últimos 10 minutos
                 online = (fecha_ultima and (ahora - fecha_ultima).total_seconds() < 600)
                 estado = "Online" if online else "Offline"
-                # Tiempo encendido: minutos desde la última medida si está Online, 0 si está Offline
-                tiempo_encendido_min = int((ahora - fecha_ultima).total_seconds() // 60) if online else 0
+                # TIEMPO ENCENDIDO: suma de minutos en los que el sensor estuvo online (todas las medidas con diferencia < 10min)
+                cur.execute(
+                    "SELECT fecha FROM medidas WHERE id_sensor = %s ORDER BY fecha ASC",
+                    (sensor_id,)
+                )
+                fechas = [f[0] for f in cur.fetchall()]
+                tiempo_encendido_min = 0
+                if fechas:
+                    for i in range(1, len(fechas)):
+                        diff = (fechas[i] - fechas[i-1]).total_seconds() / 60
+                        if diff < 10:
+                            tiempo_encendido_min += diff
+                    # Si el sensor está online, suma el tiempo desde la última medida hasta ahora
+                    if online:
+                        tiempo_encendido_min += (ahora - fechas[-1]).total_seconds() / 60
+                    tiempo_encendido_min = int(tiempo_encendido_min)
+                else:
+                    tiempo_encendido_min = 0
+                ultimo_dato = fecha_ultima.strftime('%Y-%m-%d %H:%M:%S')
             else:
                 valor = None
                 ultimo_dato = None
@@ -620,7 +636,101 @@ def obtener_usuarios_admin():
         conn.close()
     
 
+@app.route('/reporte_usuario', methods=['POST'])
+def reporte_usuario():
+    data = request.get_json()
+    id_usuario = data.get('id_usuario')
+    fecha_inicio = data.get('fechaInicio')
+    fecha_fin = data.get('fechaFin')
+    sensor_id = data.get('sensor_id')  # Puede ser None para todos
+    tipo_reporte = data.get('tipo_reporte')  # 'semanal', 'mensual', 'todos'
+
+    if not id_usuario:
+        return jsonify({'error': 'Falta id_usuario'}), 400
+
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        # Obtener sensores del usuario
+        cur.execute(
+            "SELECT id, nombre_sensor FROM sensores WHERE id_usuario = %s",
+            (id_usuario,)
+        )
+        sensores = cur.fetchall()
+        sensores_dict = {str(s[0]): s[1] for s in sensores}
+        if not sensores:
+            return jsonify({'error': 'No tiene sensores registrados'}), 404
+
+        # Construir filtro de sensores
+        sensores_ids = [str(s[0]) for s in sensores]
+        if sensor_id and str(sensor_id) in sensores_ids:
+            sensores_ids = [str(sensor_id)]
+
+        # Fechas
+        filtros = []
+        params = []
+        if fecha_inicio:
+            filtros.append("m.fecha >= %s")
+            params.append(datetime.strptime(fecha_inicio, '%Y-%m-%d'))
+        if fecha_fin:
+            filtros.append("m.fecha <= %s")
+            params.append(datetime.strptime(fecha_fin, '%Y-%m-%d'))
+
+        # Filtro sensores
+        filtros.append("m.id_sensor IN %s")
+        params.append(tuple(map(int, sensores_ids)))
+
+        where = " AND ".join(filtros)
+        query = f"""
+            SELECT m.id_sensor, s.nombre_sensor, m.fecha, m.valor_de_la_medida
+            FROM medidas m
+            JOIN sensores s ON m.id_sensor = s.id
+            WHERE {where}
+            ORDER BY m.fecha ASC
+        """
+        cur.execute(query, tuple(params))
+        resultados = cur.fetchall()
+
+        # Agrupación por semana/mes si aplica
+        from collections import defaultdict
+        data = []
+        if tipo_reporte in ('semanal', 'mensual'):
+            agrupados = defaultdict(list)
+            for row in resultados:
+                fecha = row[2]
+                if tipo_reporte == 'semanal':
+                    key = f"{fecha.year}-S{fecha.isocalendar()[1]}"
+                else:
+                    key = f"{fecha.year}-{fecha.month:02d}"
+                agrupados[(row[0], key)].append(row)
+            # Promedio por grupo
+            for (sensor_id, periodo), rows in agrupados.items():
+                valores = [r[3] for r in rows]
+                promedio = sum(valores) / len(valores) if valores else 0
+                data.append({
+                    'sensor_id': sensor_id,
+                    'nombre_sensor': sensores_dict.get(str(sensor_id), ''),
+                    'periodo': periodo,
+                    'promedio': round(promedio, 2),
+                    'medidas': len(valores)
+                })
+        else:
+            # Todos los datos crudos
+            for row in resultados:
+                data.append({
+                    'sensor_id': row[0],
+                    'nombre_sensor': row[1],
+                    'fecha': row[2].strftime('%Y-%m-%d %H:%M:%S'),
+                    'valor': row[3]
+                })
+
+        cur.close()
+        conn.close()
+        return jsonify({'success': True, 'data': data}), 200
+    except Exception as e:
+        print(f"Error en reporte_usuario: {e}")
+        return jsonify({'success': False, 'message': 'Error al generar el reporte'}), 500
+
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
-
-
