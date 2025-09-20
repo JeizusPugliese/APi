@@ -642,11 +642,11 @@ def reporte_usuario():
     id_usuario = data.get('id_usuario')
     fecha_inicio = data.get('fechaInicio')
     fecha_fin = data.get('fechaFin')
-    sensor_id = data.get('sensor_id')  # Puede ser None para todos
+    sensor_id = data.get('sensor_id')  # Puede ser None o ''
     tipo_reporte = data.get('tipo_reporte')  # 'semanal', 'mensual', 'todos'
 
     if not id_usuario:
-        return jsonify({'error': 'Falta id_usuario'}), 400
+        return jsonify({'success': False, 'message': 'Falta id_usuario', 'data': []}), 400
 
     try:
         conn = get_connection()
@@ -660,7 +660,9 @@ def reporte_usuario():
         sensores = cur.fetchall()
         sensores_dict = {str(s[0]): s[1] for s in sensores}
         if not sensores:
-            return jsonify({'error': 'No tiene sensores registrados'}), 404
+            cur.close()
+            conn.close()
+            return jsonify({'success': True, 'data': []}), 200  # No error, solo vacío
 
         # Construir filtro de sensores
         sensores_ids = [str(s[0]) for s in sensores]
@@ -678,7 +680,7 @@ def reporte_usuario():
             params.append(datetime.strptime(fecha_fin, '%Y-%m-%d'))
 
         # Filtro sensores
-        filtros.append("m.id_sensor IN %s")
+        filtros.append(f"m.id_sensor IN %s")
         params.append(tuple(map(int, sensores_ids)))
 
         where = " AND ".join(filtros)
@@ -692,9 +694,8 @@ def reporte_usuario():
         cur.execute(query, tuple(params))
         resultados = cur.fetchall()
 
-        # Agrupación por semana/mes si aplica
         from collections import defaultdict
-        data = []
+        data_result = []
         if tipo_reporte in ('semanal', 'mensual'):
             agrupados = defaultdict(list)
             for row in resultados:
@@ -704,11 +705,10 @@ def reporte_usuario():
                 else:
                     key = f"{fecha.year}-{fecha.month:02d}"
                 agrupados[(row[0], key)].append(row)
-            # Promedio por grupo
             for (sensor_id, periodo), rows in agrupados.items():
                 valores = [r[3] for r in rows]
                 promedio = sum(valores) / len(valores) if valores else 0
-                data.append({
+                data_result.append({
                     'sensor_id': sensor_id,
                     'nombre_sensor': sensores_dict.get(str(sensor_id), ''),
                     'periodo': periodo,
@@ -716,9 +716,8 @@ def reporte_usuario():
                     'medidas': len(valores)
                 })
         else:
-            # Todos los datos crudos
             for row in resultados:
-                data.append({
+                data_result.append({
                     'sensor_id': row[0],
                     'nombre_sensor': row[1],
                     'fecha': row[2].strftime('%Y-%m-%d %H:%M:%S'),
@@ -727,10 +726,10 @@ def reporte_usuario():
 
         cur.close()
         conn.close()
-        return jsonify({'success': True, 'data': data}), 200
+        return jsonify({'success': True, 'data': data_result}), 200
     except Exception as e:
         print(f"Error en reporte_usuario: {e}")
-        return jsonify({'success': False, 'message': 'Error al generar el reporte'}), 500
+        return jsonify({'success': False, 'message': 'Error al generar el reporte', 'data': []}), 500
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
