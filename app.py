@@ -15,15 +15,15 @@ CORS(app,
 SECRET_KEY = '12345666'
 port = int(os.environ.get('PORT', 5000))
 
-# 🔑 conexión a PostgreSQL en Azure
 def get_connection():
     return psycopg2.connect(
-        user="JesusPugliese13",  
-        password="Greentech1302",    
-        host="greentech.postgres.database.azure.com",
+        user="greentech_user",
+        password="Greentech2025",
+        host="localhost",
         port=5432,
-        database="softcul"           
+        database="greentech"
     )
+
     
 
 revoked_tokens = set()
@@ -733,3 +733,4 @@ def reporte_usuario():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
