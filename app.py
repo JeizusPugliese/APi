@@ -21,7 +21,7 @@ def get_connection():
         password="Greentech2025",
         host="localhost",
         port=5434,
-        database="greentech"
+        database="greentech_db"
     )
 
     
@@ -733,5 +733,6 @@ def reporte_usuario():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
