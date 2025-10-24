@@ -1,7 +1,8 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-import psycopg2
+import mysql.connector
+from mysql.connector import Error
 from datetime import datetime, timedelta
 import jwt as pyjwt
 
@@ -17,17 +18,19 @@ port = int(os.environ.get('PORT', 5000))
 
 def get_connection():
     try:
-        conn = psycopg2.connect(
+        conn = mysql.connector.connect(
             user="ub5pgwfmqlphbjdl",
             password="UofpetGdsNMdjfA4reNC",
             host="bwmc0ch6np8udxefdc4p-mysql.services.clever-cloud.com",
             port=3306,
             database="bwmc0ch6np8udxefdc4p",
         )
-        print("✅ Conexión establecida correctamente")
-        return conn
-    except Exception as e:
-        print("❌ Error de conexión:", e)
+        if conn.is_connected():
+            print("✅ Conexión MySQL establecida correctamente")
+            return conn
+        raise Error("No se pudo establecer la conexión con MySQL")
+    except Error as e:
+        print("❌ Error de conexión MySQL:", e)
         raise
 
 
@@ -37,7 +40,7 @@ revoked_tokens = set()
 
 @app.route('/')
 def home():
-    return jsonify({"message": "Bienvenido a la API con PostgreSQL!"})
+    return jsonify({"message": "Bienvenido a la API con MySQL!"})
 
 @app.route('/login', methods=['POST'])
 def login():
@@ -64,7 +67,8 @@ def login():
                 }, SECRET_KEY, algorithm='HS256')
 
                 cursor.execute("SELECT nombre FROM rol WHERE id = %s", (id_rol,))
-                rol = cursor.fetchone()[0]
+                rol_result = cursor.fetchone()
+                rol = rol_result[0] if rol_result else None
 
                 cursor.close()
                 conn.close()
@@ -740,15 +744,3 @@ def reporte_usuario():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
-
-
-
-
-
-
-
-
-
-
-
-
