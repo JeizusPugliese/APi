@@ -16,19 +16,20 @@ SECRET_KEY = '12345666'
 port = int(os.environ.get('PORT', 5000))
 
 def get_connection():
-    return psycopg2.connect(
-        user="admin",
-        password="Ln1lGNVE3cpcdKuqRimltVkKWASdP3Zq",
-        host="dpg-d3tc5575r7bs73emmm50-a.oregon-postgres.render.com",
-        port=5432,
-        database="greentech_cejo",
-        sslmode="prefer"
-    )
-     print("✅ Conexión establecida correctamente")
-         return conn
-     except Exception as e:
-          print("❌ Error de conexión:", e)
-          raise
+    try:
+        conn = psycopg2.connect(
+            user="admin",
+            password="Ln1lGNVE3cpcdKuqRimltVkKWASdP3Zq",
+            host="dpg-d3tc5575r7bs73emmm50-a.oregon-postgres.render.com",
+            port=5432,
+            database="greentech_cejo",
+            sslmode="prefer"
+        )
+        print("✅ Conexión establecida correctamente")
+        return conn
+    except Exception as e:
+        print("❌ Error de conexión:", e)
+        raise
 
 
     
@@ -740,6 +741,7 @@ def reporte_usuario():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
 
