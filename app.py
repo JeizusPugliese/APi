@@ -24,6 +24,12 @@ def get_connection():
         database="greentech_cejo",
         sslmode="prefer"
     )
+    print("✅ Conexión establecida correctamente")
+    return conn
+except Exception as e:
+     print("❌ Error de conexión:", e)
+     raise
+
 
     
 
@@ -734,6 +740,7 @@ def reporte_usuario():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
 
