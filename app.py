@@ -23,7 +23,7 @@ def get_connection():
             host="dpg-d3tc5575r7bs73emmm50-a.oregon-postgres.render.com",
             port=5432,
             database="greentech_cejo",
-            sslmode="prefer"
+            sslmode="require"
         )
         print("✅ Conexión establecida correctamente")
         return conn
@@ -741,6 +741,7 @@ def reporte_usuario():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
 
