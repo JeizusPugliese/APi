@@ -18,12 +18,11 @@ port = int(os.environ.get('PORT', 5000))
 def get_connection():
     try:
         conn = psycopg2.connect(
-            user="admin",
-            password="Ln1lGNVE3cpcdKuqRimltVkKWASdP3Zq",
-            host="dpg-d3tc5575r7bs73emmm50-a.oregon-postgres.render.com",
-            port=5432,
-            database="greentech_cejo",
-            sslmode="require"
+            user="ub5pgwfmqlphbjdl",
+            password="UofpetGdsNMdjfA4reNC",
+            host="bwmc0ch6np8udxefdc4p-mysql.services.clever-cloud.com",
+            port=3306,
+            database="bwmc0ch6np8udxefdc4p",
         )
         print("✅ Conexión establecida correctamente")
         return conn
@@ -741,6 +740,7 @@ def reporte_usuario():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
+
 
 
 
