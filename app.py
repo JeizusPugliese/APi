@@ -34,6 +34,115 @@ def get_connection():
         raise
 
 
+def _fetch_sensores_con_metricas(conn, where_clause="", params=()):
+    cursor = conn.cursor(dictionary=True)
+    base_query = """
+        SELECT s.id,
+               s.nombre_sensor,
+               s.referencia,
+               s.id_tipo_sensor,
+               ts.nombre AS tipo_sensor,
+               s.id_usuario
+        FROM sensores s
+        JOIN tipo_sensor ts ON s.id_tipo_sensor = ts.id
+    """
+    if where_clause:
+        base_query += f" WHERE {where_clause}"
+    base_query += " ORDER BY s.id DESC"
+
+    cursor.execute(base_query, params)
+    sensores = cursor.fetchall()
+
+    if not sensores:
+        cursor.close()
+        return []
+
+    sensor_ids = [s['id'] for s in sensores]
+    ids_tuple = tuple(sensor_ids)
+    placeholders = ','.join(['%s'] * len(sensor_ids))
+
+    # Última medición por sensor
+    query_ultima_medida = f"""
+        SELECT m.id_sensor, m.valor_de_la_medida, m.fecha
+        FROM medidas m
+        JOIN (
+            SELECT id_sensor, MAX(fecha) AS max_fecha
+            FROM medidas
+            WHERE id_sensor IN ({placeholders})
+            GROUP BY id_sensor
+        ) ult ON ult.id_sensor = m.id_sensor AND ult.max_fecha = m.fecha
+    """
+    cursor.execute(query_ultima_medida, ids_tuple)
+    ultimas = cursor.fetchall()
+    ultimas_map = {
+        fila['id_sensor']: {
+            'valor': fila['valor_de_la_medida'],
+            'fecha': fila['fecha']
+        } for fila in ultimas
+    }
+
+    # Tiempo encendido utilizando ventana (diferencias < 10 min)
+    query_tiempo = f"""
+        SELECT id_sensor,
+               SUM(
+                   CASE
+                       WHEN prev_fecha IS NOT NULL
+                            AND TIMESTAMPDIFF(MINUTE, prev_fecha, fecha) < 10
+                       THEN TIMESTAMPDIFF(MINUTE, prev_fecha, fecha)
+                       ELSE 0
+                   END
+               ) AS minutos
+        FROM (
+            SELECT id_sensor,
+                   fecha,
+                   LAG(fecha) OVER (PARTITION BY id_sensor ORDER BY fecha) AS prev_fecha
+            FROM medidas
+            WHERE id_sensor IN ({placeholders})
+        ) t
+        GROUP BY id_sensor
+    """
+    cursor.execute(query_tiempo, ids_tuple)
+    tiempo_map = {fila['id_sensor']: int(fila['minutos'] or 0) for fila in cursor.fetchall()}
+
+    now = datetime.utcnow()
+    resultado = []
+
+    for sensor in sensores:
+        sensor_id = sensor['id']
+        ultima = ultimas_map.get(sensor_id)
+        valor = ultima['valor'] if ultima else None
+        fecha = ultima['fecha'] if ultima else None
+        ultimo_dato = fecha.strftime('%Y-%m-%d %H:%M:%S') if fecha else None
+
+        estado = "Offline"
+        tiempo_encendido = tiempo_map.get(sensor_id, 0)
+
+        if fecha:
+            diff_min = (now - fecha).total_seconds() / 60
+            if diff_min < 10:
+                estado = "Online"
+                tiempo_encendido += int(diff_min)
+
+        resultado.append({
+            'id': sensor_id,
+            'nombre_sensor': sensor['nombre_sensor'],
+            'referencia': sensor['referencia'],
+            'id_tipo_sensor': sensor['id_tipo_sensor'],
+            'tipo_sensor': sensor['tipo_sensor'],
+            'id_usuario': sensor['id_usuario'],
+            'valor': valor,
+            'ultimo_dato': ultimo_dato,
+            'estado': estado,
+            'tiempo_encendido': tiempo_encendido,
+            # Campos auxiliares para compatibilidad con el front
+            'sensor': sensor['nombre_sensor'],
+            'fecha': ultimo_dato
+        })
+
+    cursor.close()
+    return resultado
+
+
     
 
 revoked_tokens = set()
@@ -229,23 +338,27 @@ def actualizar_usuario():
     nombre = data.get('nombre')
     apellido = data.get('apellido')
     correo = data.get('correo')
-    password = data.get('password')
+    password = (data.get('password') or '').strip()
     celular = data.get('celular')
-    
+
     if not all([nombre, apellido, correo, celular]):
         return jsonify({"success": False, "message": "Todos los campos son requeridos"}), 400
-    
+
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        query = """
-            UPDATE usuarios 
-            SET nombre = %s, apellido = %s, password = %s, celular = %s
-            WHERE correo = %s
-        """
-        cursor.execute(query, (nombre, apellido, password, celular, correo))
+        updates = ["nombre = %s", "apellido = %s", "celular = %s"]
+        params = [nombre, apellido, celular]
+
+        if password:
+            updates.append("password = %s")
+            params.append(password)
+
+        query = f"UPDATE usuarios SET {', '.join(updates)} WHERE correo = %s"
+        params.append(correo)
+        cursor.execute(query, tuple(params))
         conn.commit()
-        
+
         if cursor.rowcount == 0:
             cursor.close()
             conn.close()
@@ -384,23 +497,9 @@ def consultar_reportes():
 def obtener_todos_los_sensores():
     try:
         conn = get_connection()
-        cur = conn.cursor()
-        query = """
-            SELECT s.nombre_sensor, m.fecha, m.valor_de_la_medida
-            FROM medidas m
-            JOIN sensores s ON m.id_sensor = s.id
-            ORDER BY m.fecha DESC
-        """
-        cur.execute(query)
-        resultados = cur.fetchall()
-
-        # Formatear los resultados con los índices correctos
-        data = [{'sensor': row[0], 'fecha': row[1].strftime('%Y-%m-%d %H:%M:%S'), 'valor': row[2]} for row in resultados]
-
-        cur.close()
+        sensores = _fetch_sensores_con_metricas(conn)
         conn.close()
-        return jsonify(data), 200
-
+        return jsonify(sensores), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -505,72 +604,13 @@ def insertar_medidas():
 def sensores_usuario(id_usuario):
     try:
         conn = get_connection()
-        cur = conn.cursor()
-        query = '''
-            SELECT s.id, s.nombre_sensor, s.referencia, s.id_tipo_sensor, ts.nombre as tipo_sensor, s.id_usuario
-            FROM sensores s
-            JOIN tipo_sensor ts ON s.id_tipo_sensor = ts.id
-            WHERE s.id_usuario = %s
-            ORDER BY s.id DESC
-        '''
-        cur.execute(query, (id_usuario,))
-        sensores = cur.fetchall()
-        data = []
-        for row in sensores:
-            sensor_id = row[0]
-            # Última medida
-            cur.execute(
-                "SELECT valor_de_la_medida, fecha FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1",
-                (sensor_id,)
-            )
-            medida = cur.fetchone()
-            if medida:
-                valor = medida[0]
-                fecha_ultima = medida[1]
-                from datetime import datetime, timedelta
-                ahora = datetime.utcnow()
-                # Estado: Online si la última medida es de los últimos 10 minutos
-                online = (fecha_ultima and (ahora - fecha_ultima).total_seconds() < 600)
-                estado = "Online" if online else "Offline"
-                # TIEMPO ENCENDIDO: suma de minutos en los que el sensor estuvo online (todas las medidas con diferencia < 10min)
-                cur.execute(
-                    "SELECT fecha FROM medidas WHERE id_sensor = %s ORDER BY fecha ASC",
-                    (sensor_id,)
-                )
-                fechas = [f[0] for f in cur.fetchall()]
-                tiempo_encendido_min = 0
-                if fechas:
-                    for i in range(1, len(fechas)):
-                        diff = (fechas[i] - fechas[i-1]).total_seconds() / 60
-                        if diff < 10:
-                            tiempo_encendido_min += diff
-                    # Si el sensor está online, suma el tiempo desde la última medida hasta ahora
-                    if online:
-                        tiempo_encendido_min += (ahora - fechas[-1]).total_seconds() / 60
-                    tiempo_encendido_min = int(tiempo_encendido_min)
-                else:
-                    tiempo_encendido_min = 0
-                ultimo_dato = fecha_ultima.strftime('%Y-%m-%d %H:%M:%S')
-            else:
-                valor = None
-                ultimo_dato = None
-                estado = "Offline"
-                tiempo_encendido_min = 0
-            data.append({
-                'id': row[0],
-                'nombre_sensor': row[1],
-                'referencia': row[2],
-                'id_tipo_sensor': row[3],
-                'tipo_sensor': row[4],
-                'id_usuario': row[5],
-                'valor': valor,
-                'ultimo_dato': ultimo_dato,
-                'estado': estado,
-                'tiempo_encendido': tiempo_encendido_min
-            })
-        cur.close()
+        sensores = _fetch_sensores_con_metricas(
+            conn,
+            where_clause="s.id_usuario = %s",
+            params=(id_usuario,)
+        )
         conn.close()
-        return jsonify(data), 200
+        return jsonify(sensores), 200
     except Exception as e:
         print(f"Error al obtener sensores del usuario: {e}")
         return jsonify({'error': 'No se pudieron obtener los sensores'}), 500
@@ -744,4 +784,5 @@ def reporte_usuario():
 
 if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
-
+from mysql.connector import Error
+from mysql.connector.cursor import MySQLCursorDict
