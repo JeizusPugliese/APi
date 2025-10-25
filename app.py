@@ -16,6 +16,19 @@ CORS(app,
 SECRET_KEY = '12345666'
 port = int(os.environ.get('PORT', 5000))
 
+def _normalize_text(value):
+    if not isinstance(value, str):
+        return ""
+    return ''.join(ch for ch in value.lower() if ch.isalnum())
+
+SENSOR_ALIAS_MAP = {
+    _normalize_text('Sensor luz'): 'SENSOR_LUZ',
+    _normalize_text('Sensor gas'): 'SENSOR_GAS',
+    _normalize_text('Sensor temp'): 'DHT11_T',
+    _normalize_text('Sensor humedad'): 'DHT11_H',
+    _normalize_text('Sensor movimiento'): 'PIR',
+}
+
 def get_connection():
     try:
         conn = mysql.connector.connect(
@@ -557,48 +570,133 @@ def get_tarjetas(user_id):
 
 @app.route('/insertar_medidas', methods=['POST'])
 def insertar_medidas():
-    data = request.json 
-    nombre_sensor = data.get('nombre_sensor') 
-    nombre_usuario = data.get('nombre_usuario') 
-    valor_de_la_medida = data.get('valor_de_la_medida')
+    data = request.get_json(silent=True) or request.form.to_dict() or request.args.to_dict()
+    if not isinstance(data, dict):
+        data = {}
+    data_lower = {k.lower(): v for k, v in data.items() if isinstance(k, str)}
 
-    if nombre_sensor is None or nombre_usuario is None or valor_de_la_medida is None:
-        return jsonify({"success": False, "message": "Faltan datos"}), 400
+    def first_value(*keys):
+        for key in keys:
+            if key in data and data[key] not in (None, ''):
+                return data[key]
+            lower_key = key.lower()
+            if lower_key in data_lower and data_lower[lower_key] not in (None, ''):
+                return data_lower[lower_key]
+        return None
 
+    raw_valor = first_value('valor_de_la_medida', 'valor', 'medida', 'valor_medida')
+    sensor_id = first_value('id_sensor', 'sensor_id', 'sensorId')
+    sensor_nombre = first_value('nombre_sensor', 'sensor', 'sensor_nombre')
+    sensor_referencia = first_value('referencia', 'sensor_referencia')
+    usuario_id = first_value('id_usuario', 'usuario_id', 'user_id', 'idUser')
+    usuario_nombre = first_value('nombre_usuario', 'usuario', 'user_nombre')
+    usuario_correo = first_value('correo_usuario', 'correo', 'email')
+    fecha_raw = first_value('fecha', 'timestamp', 'fecha_medida')
+
+    if raw_valor is None:
+        return jsonify({"success": False, "message": "Falta el valor de la medida"}), 400
+
+    try:
+        valor_de_la_medida = float(raw_valor)
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "message": "Valor de la medida inválido"}), 400
+
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        query_sensor = "SELECT id FROM sensores WHERE nombre_sensor = %s"
-        cursor.execute(query_sensor, (nombre_sensor,))
-        sensor = cursor.fetchone()
-        
+        sensor = None
+        if sensor_id:
+            cursor.execute("SELECT id FROM sensores WHERE id = %s", (sensor_id,))
+            sensor = cursor.fetchone()
+        if not sensor and sensor_referencia:
+            cursor.execute("SELECT id FROM sensores WHERE referencia = %s", (sensor_referencia,))
+            sensor = cursor.fetchone()
+        if not sensor and sensor_nombre:
+            cursor.execute(
+                "SELECT id FROM sensores WHERE LOWER(nombre_sensor) = LOWER(%s)",
+                (sensor_nombre,)
+            )
+            sensor = cursor.fetchone()
+        if not sensor and sensor_nombre:
+            normalized = _normalize_text(sensor_nombre)
+            alias_nombre = SENSOR_ALIAS_MAP.get(normalized)
+            if alias_nombre:
+                cursor.execute(
+                    "SELECT id FROM sensores WHERE LOWER(nombre_sensor) = LOWER(%s)",
+                    (alias_nombre,)
+                )
+                sensor = cursor.fetchone()
+        if not sensor and sensor_nombre:
+            normalized = _normalize_text(sensor_nombre)
+            cursor.execute(
+                """
+                SELECT id FROM sensores
+                WHERE REPLACE(REPLACE(LOWER(nombre_sensor), '_', ''), ' ', '') = %s
+                LIMIT 1
+                """,
+                (normalized,)
+            )
+            sensor = cursor.fetchone()
+
         if not sensor:
-            cursor.close()
-            conn.close()
             return jsonify({"success": False, "message": "Sensor no encontrado"}), 404
         id_sensor = sensor[0]
 
-        query_usuario = "SELECT id FROM usuarios WHERE nombre = %s"
-        cursor.execute(query_usuario, (nombre_usuario,))
-        usuario = cursor.fetchone()
+        usuario = None
+        if usuario_id:
+            cursor.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
+            usuario = cursor.fetchone()
+        if not usuario and usuario_correo:
+            cursor.execute(
+                "SELECT id FROM usuarios WHERE LOWER(correo) = LOWER(%s)",
+                (usuario_correo,)
+            )
+            usuario = cursor.fetchone()
+        if not usuario and usuario_nombre:
+            cursor.execute(
+                "SELECT id FROM usuarios WHERE LOWER(nombre) = LOWER(%s)",
+                (usuario_nombre,)
+            )
+            usuario = cursor.fetchone()
 
         if not usuario:
-            cursor.close()
-            conn.close()
             return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
         id_usuarios = usuario[0]
 
-        query = "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida) VALUES (%s, %s, %s)"
-        cursor.execute(query, (id_sensor, id_usuarios, valor_de_la_medida))
+        fecha = None
+        if fecha_raw:
+            try:
+                fecha = datetime.fromisoformat(fecha_raw)
+            except ValueError:
+                print(f"Warning: fecha con formato inválido recibida: {fecha_raw}")
+                fecha = None
+
+        if fecha:
+            cursor.execute(
+                "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida, fecha) VALUES (%s, %s, %s, %s)",
+                (id_sensor, id_usuarios, valor_de_la_medida, fecha)
+            )
+        else:
+            cursor.execute(
+                "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida) VALUES (%s, %s, %s)",
+                (id_sensor, id_usuarios, valor_de_la_medida)
+            )
         conn.commit()
-        cursor.close()
-        conn.close()
 
         return jsonify({"success": True, "message": "Medida añadida con éxito"}), 201
     except Exception as e:
+        if conn:
+            conn.rollback()
         print(f"Error al añadir medida: {e}")
         return jsonify({"success": False, "message": "Error al añadir medida"}), 500
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 @app.route('/sensores_usuario/<int:id_usuario>', methods=['GET'])
 def sensores_usuario(id_usuario):
