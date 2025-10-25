@@ -616,19 +616,10 @@ def insertar_medidas():
             sensor = cursor.fetchone()
         if not sensor and sensor_nombre:
             cursor.execute(
-                "SELECT id FROM sensores WHERE LOWER(nombre_sensor) = LOWER(%s)",
+                "SELECT id FROM sensores WHERE LOWER(REPLACE(REPLACE(nombre_sensor, '_', ''), ' ', '')) = LOWER(REPLACE(REPLACE(%s, '_', ''), ' ', ''))",
                 (sensor_nombre,)
             )
             sensor = cursor.fetchone()
-        if not sensor and sensor_nombre:
-            normalized = _normalize_text(sensor_nombre)
-            alias_nombre = SENSOR_ALIAS_MAP.get(normalized)
-            if alias_nombre:
-                cursor.execute(
-                    "SELECT id FROM sensores WHERE LOWER(nombre_sensor) = LOWER(%s)",
-                    (alias_nombre,)
-                )
-                sensor = cursor.fetchone()
         if not sensor and sensor_nombre:
             normalized = _normalize_text(sensor_nombre)
             cursor.execute(
@@ -640,6 +631,14 @@ def insertar_medidas():
                 (normalized,)
             )
             sensor = cursor.fetchone()
+        if not sensor and sensor_nombre:
+            alias_nombre = SENSOR_ALIAS_MAP.get(_normalize_text(sensor_nombre))
+            if alias_nombre:
+                cursor.execute(
+                    "SELECT id FROM sensores WHERE LOWER(nombre_sensor) = LOWER(%s)",
+                    (alias_nombre,)
+                )
+                sensor = cursor.fetchone()
 
         if not sensor:
             return jsonify({"success": False, "message": "Sensor no encontrado"}), 404
