@@ -22,11 +22,11 @@ def _normalize_text(value):
     return ''.join(ch for ch in value.lower() if ch.isalnum())
 
 SENSOR_ALIAS_MAP = {
-    _normalize_text('Sensor luz'): 'SENSOR_LUZ',
-    _normalize_text('Sensor gas'): 'SENSOR_GAS',
-    _normalize_text('Sensor temp'): 'DHT11_T',
-    _normalize_text('Sensor humedad'): 'DHT11_H',
-    _normalize_text('Sensor movimiento'): 'PIR',
+    _normalize_text('Sensor luz'): ['SENSOR_LUZ', 'DHT11_T'],
+    _normalize_text('Sensor gas'): ['SENSOR_GAS', 'MQ7'],
+    _normalize_text('Sensor temp'): ['SENSOR_TEMP', 'DHT11_T'],
+    _normalize_text('Sensor humedad'): ['SENSOR_HUM', 'DHT11_H'],
+    _normalize_text('Sensor movimiento'): ['SENSOR_MOVIMIENTO', 'PIR'],
 }
 
 def get_connection():
@@ -632,13 +632,14 @@ def insertar_medidas():
             )
             sensor = cursor.fetchone()
         if not sensor and sensor_nombre:
-            alias_nombre = SENSOR_ALIAS_MAP.get(_normalize_text(sensor_nombre))
-            if alias_nombre:
+            for alias_nombre in SENSOR_ALIAS_MAP.get(_normalize_text(sensor_nombre), []):
                 cursor.execute(
                     "SELECT id FROM sensores WHERE LOWER(nombre_sensor) = LOWER(%s)",
                     (alias_nombre,)
                 )
                 sensor = cursor.fetchone()
+                if sensor:
+                    break
 
         if not sensor:
             return jsonify({"success": False, "message": "Sensor no encontrado"}), 404
