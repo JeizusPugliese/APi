@@ -557,10 +557,10 @@ def get_tarjetas(user_id):
 
 @app.route('/insertar_medidas', methods=['POST'])
 def insertar_medidas():
-    data = request.json
-    nombre_sensor = data.get('nombre_sensor')
-    nombre_usuario = data.get('nombre_usuario')
-    valor_de_la_medida = data.get('valor_de_la_medida')  # Corregido
+    data = request.json 
+    nombre_sensor = data.get('nombre_sensor') 
+    nombre_usuario = data.get('nombre_usuario') 
+    valor_de_la_medida = data.get('valor_de_la_medida')
 
     if nombre_sensor is None or nombre_usuario is None or valor_de_la_medida is None:
         return jsonify({"success": False, "message": "Faltan datos"}), 400
@@ -572,7 +572,7 @@ def insertar_medidas():
         query_sensor = "SELECT id FROM sensores WHERE nombre_sensor = %s"
         cursor.execute(query_sensor, (nombre_sensor,))
         sensor = cursor.fetchone()
-
+        
         if not sensor:
             cursor.close()
             conn.close()
@@ -591,14 +591,46 @@ def insertar_medidas():
 
         query = "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida) VALUES (%s, %s, %s)"
         cursor.execute(query, (id_sensor, id_usuarios, valor_de_la_medida))
-        conn.commit()  # CORREGIDO: conn.connit() -> conn.commit()
+        conn.commit()
         cursor.close()
         conn.close()
 
         return jsonify({"success": True, "message": "Medida añadida con éxito"}), 201
     except Exception as e:
-        print(f"Error al añadir medida: {e}")  # Corregido
+        print(f"Error al añadir medida: {e}")
         return jsonify({"success": False, "message": "Error al añadir medida"}), 500
+
+@app.route('/sensores_usuario/<int:id_usuario>', methods=['GET'])
+def sensores_usuario(id_usuario):
+    try:
+        conn = get_connection()
+        sensores = _fetch_sensores_con_metricas(
+            conn,
+            where_clause="s.id_usuario = %s",
+            params=(id_usuario,)
+        )
+        conn.close()
+        return jsonify(sensores), 200
+    except Exception as e:
+        print(f"Error al obtener sensores del usuario: {e}")
+        return jsonify({'error': 'No se pudieron obtener los sensores'}), 500
+
+@app.route('/eliminar_sensor/<int:sensor_id>', methods=['DELETE'])
+def eliminar_sensor(sensor_id):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM sensores WHERE id = %s", (sensor_id,))
+        conn.commit()
+        deleted = cur.rowcount
+        cur.close()
+        conn.close()
+        if deleted == 0:
+            return jsonify({"success": False, "message": "Sensor no encontrado"}), 404
+        return jsonify({"success": True, "message": "Sensor eliminado"}), 200
+    except Exception as e:
+        print(f"Error al eliminar sensor: {e}")
+        return jsonify({"success": False, "message": "Error al eliminar sensor"}), 500
 
 @app.route('/toggle_sensor/<int:sensor_id>', methods=['POST'])
 def toggle_sensor(sensor_id):
@@ -754,4 +786,3 @@ if __name__ == "__main__":
     app.run(debug=True, host='0.0.0.0', port=port)
 from mysql.connector import Error
 from mysql.connector.cursor import MySQLCursorDict
-
