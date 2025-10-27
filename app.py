@@ -189,6 +189,24 @@ def home():
     return jsonify({"message": "Bienvenido a la API MySQL de InfoIoT"})
 
 
+@app.route("/health", methods=["GET"])
+def health_check():
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        return jsonify({"success": True, "database": "connected"})
+    except Error as exc:
+        print("Health check failed:", exc)
+        return jsonify({"success": False, "message": "Error de conexión con la base de datos"}), 500
+    finally:
+        close_resources(cursor, conn)
+
+
+
 # ---------------------------------------------------------------------------
 # Autenticación
 # ---------------------------------------------------------------------------
@@ -1051,3 +1069,4 @@ def reporte_usuario():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host="0.0.0.0", port=port)
+
