@@ -1,886 +1,1053 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
+import uuid
+from datetime import datetime, timedelta, timezone
 import mysql.connector
 from mysql.connector import Error
-from datetime import datetime, timedelta
 import jwt as pyjwt
 
+
 app = Flask(__name__, static_url_path='/static')
-CORS(app, 
-     resources={r"/*": {"origins": "*"}}, 
-     supports_credentials=True,
-     allow_headers=["Content-Type", "Authorization"],
-     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+)
 
-SECRET_KEY = '12345666'
-port = int(os.environ.get('PORT', 5000))
 
-def _normalize_text(value):
-    if not isinstance(value, str):
-        return ""
-    return ''.join(ch for ch in value.lower() if ch.isalnum())
+SECRET_KEY = os.environ.get("JWT_SECRET", "12345666")
+TOKEN_DURATION_HOURS = int(os.environ.get("TOKEN_DURATION_HOURS", 1))
 
-SENSOR_ALIAS_MAP = {
-    _normalize_text('Sensor luz'): ['SENSOR_LUZ', 'DHT11_T'],
-    _normalize_text('Sensor gas'): ['SENSOR_GAS', 'MQ7'],
-    _normalize_text('Sensor temp'): ['SENSOR_TEMP', 'DHT11_T'],
-    _normalize_text('Sensor humedad'): ['SENSOR_HUM', 'DHT11_H'],
-    _normalize_text('Sensor movimiento'): ['SENSOR_MOVIMIENTO', 'PIR'],
+DB_CONFIG = {
+    "user": os.environ.get("DB_USER", "u944963489_Admin"),
+    "password": os.environ.get("DB_PASSWORD", "Greentech2025"),
+    "host": os.environ.get("DB_HOST", "srv766.hstgr.io"),
+    "port": int(os.environ.get("DB_PORT", 3306)),
+    "database": os.environ.get("DB_NAME", "u944963489_greentech"),
 }
 
+
+# ---------------------------------------------------------------------------
+# Utilidades generales
+# ---------------------------------------------------------------------------
+
 def get_connection():
+    """Obtiene una conexión activa a MySQL o lanza Error."""
     try:
-        conn = mysql.connector.connect(
-            user="ub5pgwfmqlphbjdl",
-            password="UofpetGdsNMdjfA4reNC",
-            host="bwmc0ch6np8udxefdc4p-mysql.services.clever-cloud.com",
-            port=3306,
-            database="bwmc0ch6np8udxefdc4p",
-        )
+        conn = mysql.connector.connect(**DB_CONFIG)
         if conn.is_connected():
-            print("✅ Conexión MySQL establecida correctamente")
             return conn
         raise Error("No se pudo establecer la conexión con MySQL")
-    except Error as e:
-        print("❌ Error de conexión MySQL:", e)
+    except Error as exc:
+        print("Error de conexión MySQL:", exc)
         raise
 
 
-def _fetch_sensores_con_metricas(conn, where_clause="", params=()):
-    cursor = conn.cursor(dictionary=True)
-    base_query = """
-        SELECT s.id,
-               s.nombre_sensor,
-               s.referencia,
-               s.id_tipo_sensor,
-               ts.nombre AS tipo_sensor,
-               s.id_usuario
-        FROM sensores s
-        JOIN tipo_sensor ts ON s.id_tipo_sensor = ts.id
-    """
-    if where_clause:
-        base_query += f" WHERE {where_clause}"
-    base_query += " ORDER BY s.id DESC"
-
-    cursor.execute(base_query, params)
-    sensores = cursor.fetchall()
-
-    if not sensores:
-        cursor.close()
-        return []
-
-    sensor_ids = [s['id'] for s in sensores]
-    ids_tuple = tuple(sensor_ids)
-    placeholders = ','.join(['%s'] * len(sensor_ids))
-
-    # Última medición por sensor
-    query_ultima_medida = f"""
-        SELECT m.id_sensor, m.valor_de_la_medida, m.fecha
-        FROM medidas m
-        JOIN (
-            SELECT id_sensor, MAX(fecha) AS max_fecha
-            FROM medidas
-            WHERE id_sensor IN ({placeholders})
-            GROUP BY id_sensor
-        ) ult ON ult.id_sensor = m.id_sensor AND ult.max_fecha = m.fecha
-    """
-    cursor.execute(query_ultima_medida, ids_tuple)
-    ultimas = cursor.fetchall()
-    ultimas_map = {
-        fila['id_sensor']: {
-            'valor': fila['valor_de_la_medida'],
-            'fecha': fila['fecha']
-        } for fila in ultimas
-    }
-
-    # Tiempo encendido utilizando ventana (diferencias < 10 min)
-    query_tiempo = f"""
-        SELECT id_sensor,
-               SUM(
-                   CASE
-                       WHEN prev_fecha IS NOT NULL
-                            AND TIMESTAMPDIFF(MINUTE, prev_fecha, fecha) < 10
-                       THEN TIMESTAMPDIFF(MINUTE, prev_fecha, fecha)
-                       ELSE 0
-                   END
-               ) AS minutos
-        FROM (
-            SELECT id_sensor,
-                   fecha,
-                   LAG(fecha) OVER (PARTITION BY id_sensor ORDER BY fecha) AS prev_fecha
-            FROM medidas
-            WHERE id_sensor IN ({placeholders})
-        ) t
-        GROUP BY id_sensor
-    """
-    cursor.execute(query_tiempo, ids_tuple)
-    tiempo_map = {fila['id_sensor']: int(fila['minutos'] or 0) for fila in cursor.fetchall()}
-
-    now = datetime.utcnow()
-    resultado = []
-
-    for sensor in sensores:
-        sensor_id = sensor['id']
-        ultima = ultimas_map.get(sensor_id)
-        valor = ultima['valor'] if ultima else None
-        fecha = ultima['fecha'] if ultima else None
-        ultimo_dato = fecha.strftime('%Y-%m-%d %H:%M:%S') if fecha else None
-
-        estado = "Offline"
-        tiempo_encendido = tiempo_map.get(sensor_id, 0)
-
-        if fecha:
-            diff_min = (now - fecha).total_seconds() / 60
-            if diff_min < 10:
-                estado = "Online"
-                tiempo_encendido += int(diff_min)
-
-        resultado.append({
-            'id': sensor_id,
-            'nombre_sensor': sensor['nombre_sensor'],
-            'referencia': sensor['referencia'],
-            'id_tipo_sensor': sensor['id_tipo_sensor'],
-            'tipo_sensor': sensor['tipo_sensor'],
-            'id_usuario': sensor['id_usuario'],
-            'valor': valor,
-            'ultimo_dato': ultimo_dato,
-            'estado': estado,
-            'tiempo_encendido': tiempo_encendido,
-            # Campos auxiliares para compatibilidad con el front
-            'sensor': sensor['nombre_sensor'],
-            'fecha': ultimo_dato
-        })
-
-    cursor.close()
-    return resultado
-
-
-    
-
-revoked_tokens = set()
-
-@app.route('/')
-def home():
-    return jsonify({"message": "Bienvenido a la API con MySQL!"})
-
-@app.route('/login', methods=['POST'])
-def login():
-    data = request.json
-    correo = data.get('correo')
-    password = data.get('password')
-
-    if not correo or not password:
-        return jsonify({"success": False, "message": "Faltan datos"}), 400
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        
-        query = "SELECT id, nombre, correo, password, id_rol FROM usuarios WHERE correo = %s"
-        cursor.execute(query, (correo,))
-        user = cursor.fetchone()
-
-        if user:
-            user_id, nombre, correo_db, password_db, id_rol = user
-            if password_db == password:
-                token = pyjwt.encode({
-                    'id': user_id,
-                    'exp': datetime.utcnow() + timedelta(hours=1)
-                }, SECRET_KEY, algorithm='HS256')
-
-                cursor.execute("SELECT nombre FROM rol WHERE id = %s", (id_rol,))
-                rol_result = cursor.fetchone()
-                rol = rol_result[0] if rol_result else None
-
-                cursor.close()
-                conn.close()
-
-                return jsonify({
-                    "success": True,
-                    "token": token,
-                    "rol": rol,
-                    "id": user_id,
-                    "nombre": nombre
-                }), 200
-            else:
-                return jsonify({"success": False, "message": "Contraseña incorrecta"}), 401
-        else:
-            return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
-
-    except Exception as e:
-        print(f"Error en la consulta: {e}")
-        return jsonify({"success": False, "message": "Error en la consulta a la base de datos"}), 500
-
-@app.route('/logout', methods=['POST'])
-def logout():
-    token = request.headers.get('Authorization')
-    print(f"Token recibido: {token}")  # Para depuración
-    
-    if not token or not verificar_token(token):
-        return jsonify({'error': 'Unauthorized'}), 401
-    
-    # Revocar el token
-    if token.startswith("Bearer "):
-        token = token.split(" ")[1]
-    
-    revoked_tokens.add(token)  # Agregar a la lista de revocación
-    return jsonify({'message': 'Sesión cerrada con éxito'}), 200
-
-def verificar_token(token):
-    try:
-        if token.startswith("Bearer "):
-            token = token.split(" ")[1]
-        
-        # Decodificar el token
-        payload = pyjwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-        
-        # Verificar si el token está en la lista de revocación
-        if token in revoked_tokens:
-            print("Token revocado")
-            return False
-        
-        print("Token válido:", payload)
-        return True
-    except pyjwt.ExpiredSignatureError:
-        print("El token ha expirado")
-        return False
-    except pyjwt.InvalidTokenError:
-        print("Token inválido")
-        return False
-
-@app.route('/verificar_token', methods=['POST'])
-def verificar_token_route():
-    token = request.headers.get('Authorization')
-
-    if not token:
-        return jsonify({'success': False, 'message': 'Token no proporcionado'}), 401
-
-    if verificar_token(token):
-        return jsonify({'success': True, 'message': 'Token válido'}), 200
-    else:
-        return jsonify({'success': False, 'message': 'Token inválido o expirado'}), 401
-
-@app.route('/crear_usuario', methods=['POST'])
-def crear_usuario():
-    data = request.json
-    correo = data['correo']
-    
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM usuarios WHERE correo = %s", (correo,))
-    existing_user = cursor.fetchone()
-    
-    if existing_user:
-        cursor.close()
-        conn.close()
-        return jsonify({'error': 'El correo ya está registrado'}), 409
-    
-    # Insertar nuevo usuario
-    nombre = data['nombre']
-    apellido = data['apellido']
-    password = data['password']
-    celular = data['celular']
-    rol = data['rol']
-    cursor.execute("INSERT INTO usuarios (nombre, apellido, correo, password, celular, id_rol) VALUES (%s, %s, %s, %s, %s, %s)", 
-                (nombre, apellido, correo, password, celular, rol))
-    conn.commit()
-    cursor.close()
-    conn.close()
-    
-    return jsonify({'message': 'Usuario creado exitosamente'}), 201
-
-@app.route('/obtener_usuarios', methods=['GET'])
-def obtener_usuarios():
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        # Incluir todos los campos necesarios: id, nombre, apellido, correo, celular, id_rol
-        query = "SELECT id, nombre, apellido, correo, celular, id_rol FROM usuarios"
-        cursor.execute(query)
-        usuarios = cursor.fetchall()
-        
-        usuarios_list = []
-        for usuario in usuarios:
-            usuarios_list.append({
-                "id": usuario[0],
-                "nombre": usuario[1],
-                "apellido": usuario[2],
-                "correo": usuario[3],
-                "celular": usuario[4],
-                "rol": usuario[5]  
-            })
-            
-        return jsonify({
-            "success": True,
-            "usuarios": usuarios_list,
-            "count": len(usuarios_list)
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "message": f"Error al obtener usuarios: {str(e)}"
-        }), 500
-    finally:
-        cursor.close()
-        conn.close()
-
-@app.route('/obtener_usuario/<correo>', methods=['GET'])
-def obtener_usuario(correo):
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = "SELECT nombre, apellido, correo, password, celular FROM usuarios WHERE correo = %s"
-    cursor.execute(query, (correo,))
-    usuario = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    
-    if usuario:
-        return jsonify({"success": True, "usuario": {
-            "nombre": usuario[0],
-            "apellido": usuario[1],
-            "correo": usuario[2],
-            "password": usuario[3],
-            "celular": usuario[4]
-        }})
-    else:
-        return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
-
-@app.route('/actualizar_usuario', methods=['PUT'])
-def actualizar_usuario():
-    data = request.json
-    nombre = data.get('nombre')
-    apellido = data.get('apellido')
-    correo = data.get('correo')
-    password = (data.get('password') or '').strip()
-    celular = data.get('celular')
-
-    if not all([nombre, apellido, correo, celular]):
-        return jsonify({"success": False, "message": "Todos los campos son requeridos"}), 400
-
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        updates = ["nombre = %s", "apellido = %s", "celular = %s"]
-        params = [nombre, apellido, celular]
-
-        if password:
-            updates.append("password = %s")
-            params.append(password)
-
-        query = f"UPDATE usuarios SET {', '.join(updates)} WHERE correo = %s"
-        params.append(correo)
-        cursor.execute(query, tuple(params))
-        conn.commit()
-
-        if cursor.rowcount == 0:
+def close_resources(cursor=None, conn=None):
+    """Cierra cursores y conexiones ignorando excepciones."""
+    if cursor:
+        try:
             cursor.close()
+        except Exception:
+            pass
+    if conn:
+        try:
             conn.close()
-            return jsonify({"success": False, "message": "No se encontró el usuario"}), 404
-        
-        cursor.close()
-        conn.close()
-        return jsonify({"success": True, "message": "Usuario actualizado"})
-    
-    except Exception as e:
-        conn.rollback()
-        print(f"Error al actualizar el usuario: {e}")
-        return jsonify({"success": False, "message": "Error al actualizar el usuario"}), 500
+        except Exception:
+            pass
 
-@app.route('/eliminar_usuario/<correo>', methods=['DELETE'])
-def eliminar_usuario(correo):
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = "DELETE FROM usuarios WHERE correo = %s"
-    cursor.execute(query, (correo,))
-    conn.commit()
-    rowcount = cursor.rowcount
-    cursor.close()
-    conn.close()
-    
-    if rowcount == 0:  
-        return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
 
-    return jsonify({"success": True, "message": "Usuario eliminado"}), 200
+def json_error(message, status=400):
+    """Retorna respuesta JSON de error estándar."""
+    return jsonify({"success": False, "message": message}), status
 
-@app.route('/tipo_sensor', methods=['GET'])
-def get_tipo_sensores():
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        query = "SELECT * FROM tipo_sensor"
-        cursor.execute(query)
-        tipos = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        tipo_sensor_list = [{"id": t[0], "nombre": t[1]} for t in tipos]
-        return jsonify({"success": True, "data": tipo_sensor_list}), 200
-    except Exception as e:
-        print(f"Error al obtener tipos de sensores: {e}")
-        return jsonify({"success": False, "message": "Error al obtener tipos de sensores"}), 500
 
-@app.route('/ultimo_valor/<int:sensor_id>', methods=['GET'])
-def ultimo_valor(sensor_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = "SELECT valor_de_la_medida FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC LIMIT 1"
-    cursor.execute(query, (sensor_id,))
-    resultado = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    
-    if resultado:
-        return jsonify({'valor': resultado[0]})
-    else:
-        return jsonify({'valor': 'No hay datos disponibles'}), 404
-
-@app.route('/add_sensor', methods=['POST'])
-def add_sensor():
-    data = request.json
-    nombre_sensor = data.get('nombre_sensor')
-    referencia = data.get('referencia')
-    id_tipo_sensor = data.get('id_tipo_sensor')
-    id_usuario = data.get('id_usuario')
-
-    if not nombre_sensor or not referencia or not id_tipo_sensor or not id_usuario:
-        return jsonify({"message": "Faltan datos"}), 400
-
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        query = """
-            INSERT INTO sensores (nombre_sensor, referencia, id_tipo_sensor, id_usuario)
-            VALUES (%s, %s, %s, %s)
-        """
-        cur.execute(query, (nombre_sensor, referencia, id_tipo_sensor, id_usuario))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return jsonify({"message": "Sensor añadido con éxito!"}), 201
-    except Exception as e:
-        print(f"Error al añadir sensor: {e}")
-        return jsonify({"message": "Error al añadir sensor"}), 500
-
-@app.route('/consultar_reportes', methods=['POST'])
-def consultar_reportes():
-    data = request.get_json()
-
-    fecha_inicio = data.get('fechaInicio')
-    fecha_fin = data.get('fechaFin')
-    nombre_sensor = data.get('nombreSensor')
-    
-    try:
-        # Conversión de fechas de string a formato datetime
-        fecha_inicio_dt = datetime.strptime(fecha_inicio, '%Y-%m-%d')
-        fecha_fin_dt = datetime.strptime(fecha_fin, '%Y-%m-%d')
-
-        conn = get_connection()
-        cur = conn.cursor()
-
-        # Consulta a la base de datos para obtener los resultados dentro del rango de fechas
-        query = '''
-            SELECT s.nombre_sensor, m.fecha, m.valor_de_la_medida
-            FROM medidas m
-            JOIN sensores s ON m.id_sensor = s.id
-            WHERE s.nombre_sensor = %s
-            AND m.fecha BETWEEN %s AND %s
-        '''
-        cur.execute(query, (nombre_sensor, fecha_inicio_dt, fecha_fin_dt))
-        resultados = cur.fetchall()
-
-        # Estructura de los resultados en formato JSON
-        data = []
-        for row in resultados:
-            data.append({
-                'nombreSensor': row[0],  # Nombre del sensor
-                'fecha': row[1].strftime('%Y-%m-%d %H:%M:%S'),  # Formato de la fecha
-                'valor': row[2]  # Valor de la medida
-            })
-
-        cur.close()
-        conn.close()
-
-        return jsonify(data), 200
-
-    except Exception as e:
-        print(f"Error: {e}")
-        return jsonify({'error': 'No se pudieron obtener los datos'}), 500
-
-@app.route('/sensores_todos', methods=['GET'])
-def obtener_todos_los_sensores():
-    try:
-        conn = get_connection()
-        sensores = _fetch_sensores_con_metricas(conn)
-        conn.close()
-        return jsonify(sensores), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/historial')
-def mostrar_historial():
-    sensor_id = request.args.get('sensor')
-    conn = get_connection()
-    cursor = conn.cursor()
-    query = "SELECT valor_de_la_medida, fecha FROM medidas WHERE id_sensor = %s ORDER BY fecha DESC"
-    cursor.execute(query, (sensor_id,))
-    historial = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    
-    # Convertir los resultados a una lista de diccionarios
-    historial_json = [{'valor': h[0], 'fecha': h[1]} for h in historial]
-    
-    # Retornar los datos en formato JSON
-    return jsonify(historial_json)
-
-@app.route('/add_card', methods=['POST'])
-def add_card():
-    user_id = request.json.get('user_id')
-    card_name = request.json.get('card_name')
-    iframe_url = request.json.get('iframe_url')
-
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO tarjetas (nombre, iframe_url, id_usuario) VALUES (%s, %s, %s)", 
-                       (card_name, iframe_url, user_id))
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        return jsonify({'message': 'Tarjeta añadida con éxito!'}), 201
-    except Exception as e:
-        print(f"Error al añadir tarjeta: {e}")
-        return jsonify({'message': 'Error al añadir tarjeta'}), 500
-
-@app.route('/get_tarjetas/<int:user_id>', methods=['GET'])
-def get_tarjetas(user_id):
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT nombre, iframe_url FROM tarjetas WHERE id_usuario = %s", (user_id,))
-        tarjetas = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        return jsonify(tarjetas), 200
-    except Exception as e:
-        print(f"Error en la consulta: {e}")
-        return jsonify({"message": "Error en la consulta a la base de datos"}), 500
-
-@app.route('/insertar_medidas', methods=['POST'])
-def insertar_medidas():
-    data = request.get_json(silent=True) or request.form.to_dict() or request.args.to_dict()
-    if not isinstance(data, dict):
-        data = {}
-    data_lower = {k.lower(): v for k, v in data.items() if isinstance(k, str)}
-
-    def first_value(*keys):
-        for key in keys:
-            if key in data and data[key] not in (None, ''):
-                return data[key]
-            lower_key = key.lower()
-            if lower_key in data_lower and data_lower[lower_key] not in (None, ''):
-                return data_lower[lower_key]
+def strip_bearer(token_header):
+    if not token_header:
         return None
+    if token_header.startswith("Bearer "):
+        return token_header.split(" ", 1)[1]
+    return token_header
 
-    raw_valor = first_value('valor_de_la_medida', 'valor', 'medida', 'valor_medida')
-    sensor_id = first_value('id_sensor', 'sensor_id', 'sensorId')
-    sensor_nombre = first_value('nombre_sensor', 'sensor', 'sensor_nombre')
-    sensor_referencia = first_value('referencia', 'sensor_referencia')
-    usuario_id = first_value('id_usuario', 'usuario_id', 'user_id', 'idUser')
-    usuario_nombre = first_value('nombre_usuario', 'usuario', 'user_nombre')
-    usuario_correo = first_value('correo_usuario', 'correo', 'email')
-    fecha_raw = first_value('fecha', 'timestamp', 'fecha_medida')
 
-    if raw_valor is None:
-        return jsonify({"success": False, "message": "Falta el valor de la medida"}), 400
-
+def parse_iso_datetime(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
     try:
-        valor_de_la_medida = float(raw_valor)
-    except (TypeError, ValueError):
-        return jsonify({"success": False, "message": "Valor de la medida inválido"}), 400
+        text = value.strip()
+    except AttributeError:
+        raise ValueError("Formato de fecha inválido")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    dt = datetime.fromisoformat(text)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
+
+# ---------------------------------------------------------------------------
+# Gestión de sesiones JWT persistentes
+# ---------------------------------------------------------------------------
+
+def store_session(cursor, usuario_id, token, expira_en):
+    session_id = str(uuid.uuid4())
+    creado_en = datetime.utcnow()
+    cursor.execute(
+        """
+        INSERT INTO sesiones (id, usuario_id, token, creado_en, expira_en, revocado)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (session_id, usuario_id, token, creado_en, expira_en, False),
+    )
+    return session_id
+
+
+def find_session(token):
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            """
+            SELECT id, usuario_id, expira_en, revocado
+            FROM sesiones
+            WHERE token = %s
+            ORDER BY creado_en DESC
+            LIMIT 1
+            """,
+            (token,),
+        )
+        return cursor.fetchone()
+    except Error as exc:
+        print("Error al consultar sesión:", exc)
+        return None
+    finally:
+        close_resources(cursor, conn)
+
+
+def revoke_session(token):
     conn = None
     cursor = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
-
-        sensor = None
-        if sensor_id:
-            cursor.execute("SELECT id FROM sensores WHERE id = %s", (sensor_id,))
-            sensor = cursor.fetchone()
-        if not sensor and sensor_referencia:
-            cursor.execute("SELECT id FROM sensores WHERE referencia = %s", (sensor_referencia,))
-            sensor = cursor.fetchone()
-        if not sensor and sensor_nombre:
-            cursor.execute(
-                "SELECT id FROM sensores WHERE LOWER(REPLACE(REPLACE(nombre_sensor, '_', ''), ' ', '')) = LOWER(REPLACE(REPLACE(%s, '_', ''), ' ', ''))",
-                (sensor_nombre,)
-            )
-            sensor = cursor.fetchone()
-        if not sensor and sensor_nombre:
-            normalized = _normalize_text(sensor_nombre)
-            cursor.execute(
-                """
-                SELECT id FROM sensores
-                WHERE REPLACE(REPLACE(LOWER(nombre_sensor), '_', ''), ' ', '') = %s
-                LIMIT 1
-                """,
-                (normalized,)
-            )
-            sensor = cursor.fetchone()
-        if not sensor and sensor_nombre:
-            for alias_nombre in SENSOR_ALIAS_MAP.get(_normalize_text(sensor_nombre), []):
-                cursor.execute(
-                    "SELECT id FROM sensores WHERE LOWER(nombre_sensor) = LOWER(%s)",
-                    (alias_nombre,)
-                )
-                sensor = cursor.fetchone()
-                if sensor:
-                    break
-
-        if not sensor:
-            return jsonify({"success": False, "message": "Sensor no encontrado"}), 404
-        id_sensor = sensor[0]
-
-        usuario = None
-        if usuario_id:
-            cursor.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
-            usuario = cursor.fetchone()
-        if not usuario and usuario_correo:
-            cursor.execute(
-                "SELECT id FROM usuarios WHERE LOWER(correo) = LOWER(%s)",
-                (usuario_correo,)
-            )
-            usuario = cursor.fetchone()
-        if not usuario and usuario_nombre:
-            cursor.execute(
-                "SELECT id FROM usuarios WHERE LOWER(nombre) = LOWER(%s)",
-                (usuario_nombre,)
-            )
-            usuario = cursor.fetchone()
-
-        if not usuario:
-            return jsonify({"success": False, "message": "Usuario no encontrado"}), 404
-        id_usuarios = usuario[0]
-
-        fecha = None
-        if fecha_raw:
-            try:
-                fecha = datetime.fromisoformat(fecha_raw)
-            except ValueError:
-                print(f"Warning: fecha con formato inválido recibida: {fecha_raw}")
-                fecha = None
-
-        if fecha:
-            cursor.execute(
-                "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida, fecha) VALUES (%s, %s, %s, %s)",
-                (id_sensor, id_usuarios, valor_de_la_medida, fecha)
-            )
-        else:
-            cursor.execute(
-                "INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida) VALUES (%s, %s, %s)",
-                (id_sensor, id_usuarios, valor_de_la_medida)
-            )
+        cursor.execute("UPDATE sesiones SET revocado = 1 WHERE token = %s", (token,))
         conn.commit()
-
-        return jsonify({"success": True, "message": "Medida añadida con éxito"}), 201
-    except Exception as e:
+        return cursor.rowcount > 0
+    except Error as exc:
         if conn:
             conn.rollback()
-        print(f"Error al añadir medida: {e}")
-        return jsonify({"success": False, "message": "Error al añadir medida"}), 500
+        print("Error al revocar sesión:", exc)
+        return False
     finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+        close_resources(cursor, conn)
 
-@app.route('/sensores_usuario/<int:id_usuario>', methods=['GET'])
-def sensores_usuario(id_usuario):
+
+def token_is_valid(token_header):
+    token = strip_bearer(token_header)
+    if not token:
+        return False
     try:
-        conn = get_connection()
-        sensores = _fetch_sensores_con_metricas(
-            conn,
-            where_clause="s.id_usuario = %s",
-            params=(id_usuario,)
-        )
-        conn.close()
-        return jsonify(sensores), 200
-    except Exception as e:
-        print(f"Error al obtener sensores del usuario: {e}")
-        return jsonify({'error': 'No se pudieron obtener los sensores'}), 500
+        pyjwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+    except pyjwt.ExpiredSignatureError:
+        print("Token expirado detectado por JWT.")
+        revoke_session(token)
+        return False
+    except pyjwt.InvalidTokenError:
+        print("Token inválido.")
+        return False
 
-@app.route('/eliminar_sensor/<int:sensor_id>', methods=['DELETE'])
-def eliminar_sensor(sensor_id):
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM sensores WHERE id = %s", (sensor_id,))
-        conn.commit()
-        deleted = cur.rowcount
-        cur.close()
-        conn.close()
-        if deleted == 0:
-            return jsonify({"success": False, "message": "Sensor no encontrado"}), 404
-        return jsonify({"success": True, "message": "Sensor eliminado"}), 200
-    except Exception as e:
-        print(f"Error al eliminar sensor: {e}")
-        return jsonify({"success": False, "message": "Error al eliminar sensor"}), 500
+    session = find_session(token)
+    if not session:
+        print("Token no registrado en la tabla de sesiones.")
+        return False
+    if session.get("revocado"):
+        print("Token previamente revocado.")
+        return False
 
-@app.route('/toggle_sensor/<int:sensor_id>', methods=['POST'])
-def toggle_sensor(sensor_id):
-    # Simulado: no hay campo 'estado' en DB. Responde OK para la UI.
-    return jsonify({"success": True, "message": "Cambio de estado simulado", "sensor_id": sensor_id}), 200
+    expira_en = session.get("expira_en")
+    if isinstance(expira_en, datetime) and expira_en <= datetime.utcnow():
+        print("Token expirado según la base de datos.")
+        revoke_session(token)
+        return False
 
-@app.route('/calibrar_sensor/<int:sensor_id>', methods=['POST'])
-def calibrar_sensor(sensor_id):
-    # Simulado: sin cambios en DB. Responde OK para la UI.
-    return jsonify({"success": True, "message": "Calibración simulada", "sensor_id": sensor_id}), 200
+    return True
 
-@app.route('/obtener_usuarios_admin', methods=['GET'])
-def obtener_usuarios_admin():
+
+# ---------------------------------------------------------------------------
+# Endpoints generales
+# ---------------------------------------------------------------------------
+
+@app.route("/")
+def home():
+    return jsonify({"message": "Bienvenido a la API MySQL de InfoIoT"})
+
+
+# ---------------------------------------------------------------------------
+# Autenticación
+# ---------------------------------------------------------------------------
+
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True) or {}
+    correo = data.get("correo")
+    password = data.get("password")
+
+    if not correo or not password:
+        return json_error("Los campos 'correo' y 'password' son obligatorios.", 400)
+
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        query = """
-            SELECT u.id, u.nombre, u.apellido, u.correo, u.celular, r.nombre as rol
-            FROM usuarios u
-            LEFT JOIN rol r ON u.id_rol = r.id
-            ORDER BY u.nombre ASC, u.apellido ASC
-        """
-        cursor.execute(query)
-        usuarios = cursor.fetchall()
-        print("Usuarios obtenidos (raw):", usuarios)  # Depuración
+        cursor.execute(
+            "SELECT id, nombre, password, id_rol FROM usuarios WHERE correo = %s",
+            (correo,),
+        )
+        registro = cursor.fetchone()
+        if not registro:
+            return json_error("Usuario no encontrado.", 404)
 
-        usuarios_list = []
-        for usuario in usuarios:
-            usuarios_list.append({
+        usuario_id, nombre, password_db, id_rol = registro
+        if password_db != password:
+            return json_error("Contraseña incorrecta.", 401)
+
+        expira_en = datetime.utcnow() + timedelta(hours=TOKEN_DURATION_HOURS)
+        token = pyjwt.encode({"id": usuario_id, "exp": expira_en}, SECRET_KEY, algorithm="HS256")
+
+        store_session(cursor, usuario_id, token, expira_en)
+        cursor.execute("UPDATE usuarios SET ultimo_acceso = NOW() WHERE id = %s", (usuario_id,))
+        cursor.execute("SELECT nombre FROM rol WHERE id = %s", (id_rol,))
+        rol = (cursor.fetchone() or (None,))[0]
+        conn.commit()
+
+        return jsonify({
+            "success": True,
+            "token": token,
+            "rol": rol,
+            "id": usuario_id,
+            "nombre": nombre,
+        })
+    except Error as exc:
+        conn.rollback()
+        print("Error en login:", exc)
+        return json_error("Error al procesar la autenticación.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    token_header = request.headers.get("Authorization")
+    if not token_is_valid(token_header):
+        return json_error("Token inválido o expirado.", 401)
+
+    token = strip_bearer(token_header)
+    if revoke_session(token):
+        return jsonify({"success": True, "message": "Sesión cerrada correctamente."})
+    return json_error("No se pudo revocar la sesión.", 500)
+
+
+@app.route("/verificar_token", methods=["POST"])
+def verificar_token_route():
+    token_header = request.headers.get("Authorization")
+    if token_is_valid(token_header):
+        return jsonify({"success": True, "message": "Token válido."})
+    return json_error("Token inválido o expirado.", 401)
+
+
+# ---------------------------------------------------------------------------
+# Gestión de usuarios
+# ---------------------------------------------------------------------------
+
+@app.route("/crear_usuario", methods=["POST"])
+def crear_usuario():
+    data = request.get_json(silent=True) or {}
+    for field in ("nombre", "apellido", "correo", "password", "celular", "rol"):
+        if field not in data or data[field] in (None, ""):
+            return json_error(f"El campo '{field}' es obligatorio.", 400)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT 1 FROM usuarios WHERE correo = %s", (data["correo"],))
+        if cursor.fetchone():
+            return json_error("El correo ya está registrado.", 409)
+
+        cursor.execute(
+            """
+            INSERT INTO usuarios (nombre, apellido, correo, password, celular, id_rol)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                data["nombre"],
+                data["apellido"],
+                data["correo"],
+                data["password"],
+                data["celular"],
+                data["rol"],
+            ),
+        )
+        conn.commit()
+        return jsonify({"success": True, "message": "Usuario creado exitosamente."}), 201
+    except Error as exc:
+        conn.rollback()
+        print("Error al crear usuario:", exc)
+        return json_error("No se pudo crear el usuario.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/obtener_usuarios", methods=["GET"])
+def obtener_usuarios():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, nombre, apellido, correo, celular, id_rol FROM usuarios")
+        usuarios = [{
+            "id": row[0],
+            "nombre": row[1],
+            "apellido": row[2],
+            "correo": row[3],
+            "celular": row[4],
+            "rol": row[5],
+        } for row in cursor.fetchall()]
+        return jsonify({"success": True, "usuarios": usuarios, "count": len(usuarios)})
+    except Error as exc:
+        print("Error al obtener usuarios:", exc)
+        return json_error("No se pudieron obtener los usuarios.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/obtener_usuario/<correo>", methods=["GET"])
+def obtener_usuario(correo):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT id, nombre, apellido, correo, password, celular, id_rol
+            FROM usuarios
+            WHERE correo = %s
+            """,
+            (correo,),
+        )
+        usuario = cursor.fetchone()
+        if not usuario:
+            return json_error("Usuario no encontrado.", 404)
+        return jsonify({
+            "success": True,
+            "usuario": {
                 "id": usuario[0],
                 "nombre": usuario[1],
                 "apellido": usuario[2],
                 "correo": usuario[3],
-                "celular": usuario[4],
-                "rol": usuario[5]
-            })
-        print("usuarios_list (dict):", usuarios_list)  # Depuración
-
-        if not usuarios_list:
-            print("No hay usuarios en la base de datos o el JOIN no retorna datos.")
-        return jsonify({
-            "success": True,
-            "usuarios": usuarios_list,
-            "count": len(usuarios_list)
+                "password": usuario[4],
+                "celular": usuario[5],
+                "rol": usuario[6],
+            },
         })
-    except Exception as e:
-        print("Error en obtener_usuarios_admin:", e)
-        return jsonify({
-            "success": False,
-            "message": f"Error al obtener usuarios: {str(e)}"
-        }), 500
+    except Error as exc:
+        print("Error al obtener usuario:", exc)
+        return json_error("No se pudo obtener el usuario.", 500)
     finally:
-        cursor.close()
-        conn.close()
-    
+        close_resources(cursor, conn)
 
-@app.route('/reporte_usuario', methods=['POST'])
-def reporte_usuario():
-    data = request.get_json()
-    id_usuario = data.get('id_usuario')
-    fecha_inicio = data.get('fechaInicio')
-    fecha_fin = data.get('fechaFin')
-    sensor_id = data.get('sensor_id')  # Puede ser None o ''
-    tipo_reporte = data.get('tipo_reporte')  # 'semanal', 'mensual', 'todos'
 
-    if not id_usuario:
-        return jsonify({'success': False, 'message': 'Falta id_usuario', 'data': []}), 400
+@app.route("/actualizar_usuario", methods=["PUT"])
+def actualizar_usuario():
+    data = request.get_json(silent=True) or {}
+    required = ("nombre", "apellido", "correo", "celular")
+    if any(not data.get(field) for field in required):
+        return json_error("Los campos 'nombre', 'apellido', 'correo' y 'celular' son obligatorios.", 400)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        updates = ["nombre = %s", "apellido = %s", "celular = %s"]
+        params = [data["nombre"], data["apellido"], data["celular"]]
+
+        password = data.get("password")
+        if password:
+            updates.append("password = %s")
+            params.append(password)
+
+        params.append(data["correo"])
+        cursor.execute(
+            f"UPDATE usuarios SET {', '.join(updates)} WHERE correo = %s",
+            tuple(params),
+        )
+        conn.commit()
+        if cursor.rowcount == 0:
+            return json_error("Usuario no encontrado.", 404)
+        return jsonify({"success": True, "message": "Usuario actualizado correctamente."})
+    except Error as exc:
+        conn.rollback()
+        print("Error al actualizar usuario:", exc)
+        return json_error("No se pudo actualizar el usuario.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/eliminar_usuario/<correo>", methods=["DELETE"])
+def eliminar_usuario(correo):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM usuarios WHERE correo = %s", (correo,))
+        conn.commit()
+        if cursor.rowcount == 0:
+            return json_error("Usuario no encontrado.", 404)
+        return jsonify({"success": True, "message": "Usuario eliminado correctamente."})
+    except Error as exc:
+        conn.rollback()
+        print("Error al eliminar usuario:", exc)
+        return json_error("No se pudo eliminar el usuario.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/obtener_usuarios_admin", methods=["GET"])
+def obtener_usuarios_admin():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT u.id, u.nombre, u.apellido, u.correo, u.celular, r.nombre
+            FROM usuarios u
+            LEFT JOIN rol r ON u.id_rol = r.id
+            ORDER BY u.nombre ASC, u.apellido ASC
+            """
+        )
+        usuarios = [{
+            "id": row[0],
+            "nombre": row[1],
+            "apellido": row[2],
+            "correo": row[3],
+            "celular": row[4],
+            "rol": row[5],
+        } for row in cursor.fetchall()]
+        return jsonify({"success": True, "usuarios": usuarios, "count": len(usuarios)})
+    except Error as exc:
+        print("Error al obtener usuarios (admin):", exc)
+        return json_error("No se pudieron obtener los usuarios.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+# ---------------------------------------------------------------------------
+# Gestión de tipos de sensor y sensores
+# ---------------------------------------------------------------------------
+
+def fetch_sensores_con_metricas(conn, where_clause=None, params=()):
+    cursor = conn.cursor(dictionary=True)
+    try:
+        base_query = """
+            SELECT s.id,
+                   s.nombre_sensor,
+                   s.referencia,
+                   s.id_tipo_sensor,
+                   ts.nombre AS tipo_sensor,
+                   s.id_usuario
+            FROM sensores s
+            INNER JOIN tipo_sensor ts ON s.id_tipo_sensor = ts.id
+        """
+        if where_clause:
+            base_query += f" WHERE {where_clause}"
+        base_query += " ORDER BY s.id DESC"
+
+        cursor.execute(base_query, params)
+        sensores = cursor.fetchall()
+        if not sensores:
+            return []
+
+        sensor_ids = [str(sensor["id"]) for sensor in sensores]
+        placeholders = ",".join(["%s"] * len(sensor_ids))
+
+        cursor.execute(
+            f"""
+            SELECT id_sensor, MAX(fecha) AS fecha, valor_de_la_medida
+            FROM medidas
+            WHERE id_sensor IN ({placeholders})
+            GROUP BY id_sensor
+            """,
+            tuple(sensor_ids),
+        )
+        ultimas = {row["id_sensor"]: row for row in cursor.fetchall()}
+
+        cursor.execute(
+            f"""
+            SELECT id_sensor,
+                   SUM(
+                       CASE
+                           WHEN prev_fecha IS NOT NULL
+                                AND TIMESTAMPDIFF(MINUTE, prev_fecha, fecha) < 10
+                           THEN TIMESTAMPDIFF(MINUTE, prev_fecha, fecha)
+                           ELSE 0
+                       END
+                   ) AS minutos
+            FROM (
+                SELECT id_sensor,
+                       fecha,
+                       LAG(fecha) OVER (PARTITION BY id_sensor ORDER BY fecha) AS prev_fecha
+                FROM medidas
+                WHERE id_sensor IN ({placeholders})
+            ) t
+            GROUP BY id_sensor
+            """,
+            tuple(sensor_ids),
+        )
+        tiempo_encendido = {row["id_sensor"]: int(row["minutos"] or 0) for row in cursor.fetchall()}
+
+        now = datetime.utcnow()
+        resultado = []
+        for sensor in sensores:
+            ultima = ultimas.get(sensor["id"])
+            valor = ultima["valor_de_la_medida"] if ultima else None
+            fecha = ultima["fecha"] if ultima else None
+            estado = "Offline"
+            minutos = tiempo_encendido.get(sensor["id"], 0)
+            if fecha:
+                diff = (now - fecha).total_seconds() / 60
+                if diff < 10:
+                    estado = "Online"
+                    minutos += int(diff)
+            resultado.append({
+                "id": sensor["id"],
+                "nombre_sensor": sensor["nombre_sensor"],
+                "referencia": sensor["referencia"],
+                "id_tipo_sensor": sensor["id_tipo_sensor"],
+                "tipo_sensor": sensor["tipo_sensor"],
+                "id_usuario": sensor["id_usuario"],
+                "valor": valor,
+                "ultimo_dato": fecha.strftime("%Y-%m-%d %H:%M:%S") if fecha else None,
+                "estado": estado,
+                "tiempo_encendido": minutos,
+                "sensor": sensor["nombre_sensor"],
+                "fecha": fecha.strftime("%Y-%m-%d %H:%M:%S") if fecha else None,
+            })
+        return resultado
+    finally:
+        close_resources(cursor)
+
+
+@app.route("/tipo_sensor", methods=["GET"])
+def get_tipo_sensores():
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT id, nombre, descripcion, unidad FROM tipo_sensor ORDER BY id ASC")
+        registros = [{
+            "id": row[0],
+            "nombre": row[1],
+            "descripcion": row[2],
+            "unidad": row[3],
+        } for row in cursor.fetchall()]
+        return jsonify({"success": True, "data": registros})
+    except Error as exc:
+        print("Error al obtener tipos de sensor:", exc)
+        return json_error("No se pudieron obtener los tipos de sensor.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/add_sensor", methods=["POST"])
+def add_sensor():
+    data = request.get_json(silent=True) or {}
+    required = ("nombre_sensor", "referencia", "id_tipo_sensor", "id_usuario")
+    if any(not data.get(field) for field in required):
+        return json_error("Los campos 'nombre_sensor', 'referencia', 'id_tipo_sensor' e 'id_usuario' son obligatorios.", 400)
 
     try:
-        conn = get_connection()
-        cur = conn.cursor()
+        id_tipo_sensor = int(data["id_tipo_sensor"])
+        id_usuario = int(data["id_usuario"])
+    except (TypeError, ValueError):
+        return json_error("Los campos 'id_tipo_sensor' e 'id_usuario' deben ser numéricos.", 400)
 
-        # Obtener sensores del usuario
-        cur.execute(
-            "SELECT id, nombre_sensor FROM sensores WHERE id_usuario = %s",
-            (id_usuario,)
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT 1 FROM tipo_sensor WHERE id = %s", (id_tipo_sensor,))
+        if not cursor.fetchone():
+            return json_error("El tipo de sensor no existe.", 404)
+        cursor.execute("SELECT 1 FROM usuarios WHERE id = %s", (id_usuario,))
+        if not cursor.fetchone():
+            return json_error("El usuario asignado no existe.", 404)
+
+        cursor.execute(
+            """
+            INSERT INTO sensores (nombre_sensor, referencia, id_tipo_sensor, id_usuario)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (data["nombre_sensor"], data["referencia"], id_tipo_sensor, id_usuario),
         )
-        sensores = cur.fetchall()
-        sensores_dict = {str(s[0]): s[1] for s in sensores}
+        conn.commit()
+        return jsonify({"success": True, "message": "Sensor añadido correctamente."}), 201
+    except Error as exc:
+        conn.rollback()
+        print("Error al añadir sensor:", exc)
+        return json_error("No se pudo añadir el sensor.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/sensores_todos", methods=["GET"])
+def obtener_todos_los_sensores():
+    conn = get_connection()
+    try:
+        resultado = fetch_sensores_con_metricas(conn)
+        return jsonify(resultado)
+    except Error as exc:
+        print("Error al obtener sensores:", exc)
+        return json_error("No se pudieron obtener los sensores.", 500)
+    finally:
+        close_resources(conn=conn)
+
+
+@app.route("/sensores_usuario/<int:id_usuario>", methods=["GET"])
+def sensores_usuario(id_usuario):
+    conn = get_connection()
+    try:
+        resultado = fetch_sensores_con_metricas(conn, "s.id_usuario = %s", (id_usuario,))
+        return jsonify(resultado)
+    except Error as exc:
+        print("Error al obtener sensores del usuario:", exc)
+        return json_error("No se pudieron obtener los sensores del usuario.", 500)
+    finally:
+        close_resources(conn=conn)
+
+
+@app.route("/eliminar_sensor/<int:sensor_id>", methods=["DELETE"])
+def eliminar_sensor(sensor_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("DELETE FROM sensores WHERE id = %s", (sensor_id,))
+        conn.commit()
+        if cursor.rowcount == 0:
+            return json_error("Sensor no encontrado.", 404)
+        return jsonify({"success": True, "message": "Sensor eliminado correctamente."})
+    except Error as exc:
+        conn.rollback()
+        print("Error al eliminar sensor:", exc)
+        return json_error("No se pudo eliminar el sensor.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/toggle_sensor/<int:sensor_id>", methods=["POST"])
+def toggle_sensor(sensor_id):
+    return jsonify({"success": True, "message": "Acción simulada.", "sensor_id": sensor_id})
+
+
+@app.route("/calibrar_sensor/<int:sensor_id>", methods=["POST"])
+def calibrar_sensor(sensor_id):
+    return jsonify({"success": True, "message": "Calibración simulada.", "sensor_id": sensor_id})
+
+
+# ---------------------------------------------------------------------------
+# Tarjetas personalizadas
+# ---------------------------------------------------------------------------
+
+@app.route("/add_card", methods=["POST"])
+def add_card():
+    data = request.get_json(silent=True) or {}
+    required = ("user_id", "card_name", "iframe_url")
+    if any(not data.get(field) for field in required):
+        return json_error("Los campos 'user_id', 'card_name' e 'iframe_url' son obligatorios.", 400)
+
+    try:
+        user_id = int(data["user_id"])
+    except (TypeError, ValueError):
+        return json_error("El campo 'user_id' debe ser numérico.", 400)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT 1 FROM usuarios WHERE id = %s", (user_id,))
+        if not cursor.fetchone():
+            return json_error("El usuario indicado no existe.", 404)
+
+        cursor.execute(
+            """
+            INSERT INTO tarjetas (nombre, iframe_url, id_usuario)
+            VALUES (%s, %s, %s)
+            """,
+            (data["card_name"], data["iframe_url"], user_id),
+        )
+        conn.commit()
+        return jsonify({"success": True, "message": "Tarjeta añadida correctamente."}), 201
+    except Error as exc:
+        conn.rollback()
+        print("Error al añadir tarjeta:", exc)
+        return json_error("No se pudo añadir la tarjeta.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/get_tarjetas/<int:user_id>", methods=["GET"])
+def get_tarjetas(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT nombre, iframe_url FROM tarjetas WHERE id_usuario = %s", (user_id,))
+        tarjetas = [{"nombre": row[0], "iframe_url": row[1]} for row in cursor.fetchall()]
+        return jsonify({"success": True, "tarjetas": tarjetas})
+    except Error as exc:
+        print("Error al obtener tarjetas:", exc)
+        return json_error("No se pudieron obtener las tarjetas.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+# ---------------------------------------------------------------------------
+# Medidas e historiales
+# ---------------------------------------------------------------------------
+
+def buscar_sensor(cursor, sensor_id=None, referencia=None, nombre=None):
+    if sensor_id is not None:
+        cursor.execute("SELECT id FROM sensores WHERE id = %s", (sensor_id,))
+        resultado = cursor.fetchone()
+        if resultado:
+            return resultado[0]
+    if referencia:
+        cursor.execute("SELECT id FROM sensores WHERE referencia = %s", (referencia,))
+        resultado = cursor.fetchone()
+        if resultado:
+            return resultado[0]
+    if nombre:
+        cursor.execute("SELECT id FROM sensores WHERE nombre_sensor = %s", (nombre,))
+        resultado = cursor.fetchone()
+        if resultado:
+            return resultado[0]
+    return None
+
+
+def buscar_usuario(cursor, usuario_id=None, correo=None, nombre=None):
+    if usuario_id is not None:
+        cursor.execute("SELECT id FROM usuarios WHERE id = %s", (usuario_id,))
+        resultado = cursor.fetchone()
+        if resultado:
+            return resultado[0]
+    if correo:
+        cursor.execute("SELECT id FROM usuarios WHERE correo = %s", (correo,))
+        resultado = cursor.fetchone()
+        if resultado:
+            return resultado[0]
+    if nombre:
+        cursor.execute("SELECT id FROM usuarios WHERE nombre = %s", (nombre,))
+        resultado = cursor.fetchone()
+        if resultado:
+            return resultado[0]
+    return None
+
+
+@app.route("/insertar_medidas", methods=["POST"])
+def insertar_medidas():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return json_error("Se requiere un cuerpo JSON válido.", 400)
+
+    raw_valor = data.get("valor_de_la_medida")
+    if raw_valor is None:
+        return json_error("El campo 'valor_de_la_medida' es obligatorio.", 400)
+    try:
+        valor = float(raw_valor)
+    except (TypeError, ValueError):
+        return json_error("El campo 'valor_de_la_medida' debe ser numérico.", 400)
+
+    sensor_id = data.get("id_sensor")
+    referencia = data.get("referencia")
+    nombre_sensor = data.get("nombre_sensor")
+
+    usuario_id = data.get("id_usuario")
+    correo_usuario = data.get("correo")
+    nombre_usuario = data.get("nombre_usuario")
+
+    parsed_sensor_id = None
+    parsed_usuario_id = None
+
+    if sensor_id is not None:
+        try:
+            parsed_sensor_id = int(sensor_id)
+        except (TypeError, ValueError):
+            return json_error("El campo 'id_sensor' debe ser numérico.", 400)
+
+    if usuario_id is not None:
+        try:
+            parsed_usuario_id = int(usuario_id)
+        except (TypeError, ValueError):
+            return json_error("El campo 'id_usuario' debe ser numérico.", 400)
+
+    fecha = data.get("fecha")
+    if fecha is not None:
+        try:
+            fecha = parse_iso_datetime(fecha)
+        except ValueError as exc:
+            return json_error(str(exc), 400)
+
+    if not any([parsed_sensor_id, referencia, nombre_sensor]):
+        return json_error("Debe proporcionar 'id_sensor', 'referencia' o 'nombre_sensor' para identificar el sensor.", 400)
+    if not any([parsed_usuario_id, correo_usuario, nombre_usuario]):
+        return json_error("Debe proporcionar 'id_usuario', 'correo' o 'nombre_usuario' para identificar al usuario.", 400)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        sensor_encontrado = buscar_sensor(cursor, parsed_sensor_id, referencia, nombre_sensor)
+        if sensor_encontrado is None:
+            return json_error("Sensor no encontrado.", 404)
+
+        usuario_encontrado = buscar_usuario(cursor, parsed_usuario_id, correo_usuario, nombre_usuario)
+        if usuario_encontrado is None:
+            return json_error("Usuario no encontrado.", 404)
+
+        if fecha:
+            cursor.execute(
+                """
+                INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida, fecha)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (sensor_encontrado, usuario_encontrado, valor, fecha),
+            )
+        else:
+            cursor.execute(
+                """
+                INSERT INTO medidas (id_sensor, id_usuarios, valor_de_la_medida)
+                VALUES (%s, %s, %s)
+                """,
+                (sensor_encontrado, usuario_encontrado, valor),
+            )
+        conn.commit()
+        return jsonify({"success": True, "message": "Medida registrada correctamente."}), 201
+    except Error as exc:
+        conn.rollback()
+        print("Error al insertar medida:", exc)
+        return json_error("No se pudo registrar la medida.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/ultimo_valor/<int:sensor_id>", methods=["GET"])
+def ultimo_valor(sensor_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT valor_de_la_medida
+            FROM medidas
+            WHERE id_sensor = %s
+            ORDER BY fecha DESC
+            LIMIT 1
+            """,
+            (sensor_id,),
+        )
+        resultado = cursor.fetchone()
+        if not resultado:
+            return json_error("No hay datos disponibles para el sensor.", 404)
+        return jsonify({"success": True, "valor": resultado[0]})
+    except Error as exc:
+        print("Error al consultar último valor:", exc)
+        return json_error("No se pudo obtener el valor.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/historial", methods=["GET"])
+def mostrar_historial():
+    sensor_id = request.args.get("sensor", type=int)
+    if sensor_id is None:
+        return json_error("El parámetro 'sensor' es obligatorio y debe ser numérico.", 400)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT valor_de_la_medida, fecha
+            FROM medidas
+            WHERE id_sensor = %s
+            ORDER BY fecha DESC
+            """,
+            (sensor_id,),
+        )
+        historial = [{"valor": row[0], "fecha": row[1].strftime("%Y-%m-%d %H:%M:%S")} for row in cursor.fetchall()]
+        return jsonify({"success": True, "historial": historial})
+    except Error as exc:
+        print("Error al obtener historial:", exc)
+        return json_error("No se pudo obtener el historial.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+# ---------------------------------------------------------------------------
+# Reportes
+# ---------------------------------------------------------------------------
+
+@app.route("/consultar_reportes", methods=["POST"])
+def consultar_reportes():
+    data = request.get_json(silent=True) or {}
+    nombre_sensor = data.get("nombreSensor")
+    fecha_inicio = data.get("fechaInicio")
+    fecha_fin = data.get("fechaFin")
+
+    if not nombre_sensor or not fecha_inicio or not fecha_fin:
+        return json_error("Los campos 'nombreSensor', 'fechaInicio' y 'fechaFin' son obligatorios.", 400)
+
+    try:
+        fecha_inicio_dt = parse_iso_datetime(fecha_inicio)
+        fecha_fin_dt = parse_iso_datetime(fecha_fin)
+    except ValueError as exc:
+        return json_error(str(exc), 400)
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            SELECT s.nombre_sensor, m.fecha, m.valor_de_la_medida
+            FROM medidas m
+            INNER JOIN sensores s ON m.id_sensor = s.id
+            WHERE s.nombre_sensor = %s
+              AND m.fecha BETWEEN %s AND %s
+            ORDER BY m.fecha ASC
+            """,
+            (nombre_sensor, fecha_inicio_dt, fecha_fin_dt),
+        )
+        reportes = [{
+            "nombreSensor": row[0],
+            "fecha": row[1].strftime("%Y-%m-%d %H:%M:%S"),
+            "valor": row[2],
+        } for row in cursor.fetchall()]
+        return jsonify({"success": True, "data": reportes})
+    except Error as exc:
+        print("Error al consultar reportes:", exc)
+        return json_error("No se pudieron obtener los reportes.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+@app.route("/reporte_usuario", methods=["POST"])
+def reporte_usuario():
+    data = request.get_json(silent=True) or {}
+    id_usuario = data.get("id_usuario")
+    if id_usuario is None:
+        return json_error("El campo 'id_usuario' es obligatorio.", 400)
+
+    try:
+        id_usuario = int(id_usuario)
+    except (TypeError, ValueError):
+        return json_error("El campo 'id_usuario' debe ser numérico.", 400)
+
+    fecha_inicio = data.get("fechaInicio")
+    fecha_fin = data.get("fechaFin")
+    tipo_reporte = data.get("tipo_reporte")
+    sensor_id = data.get("sensor_id")
+
+    if sensor_id not in (None, ""):
+        try:
+            sensor_id = int(sensor_id)
+        except (TypeError, ValueError):
+            return json_error("El campo 'sensor_id' debe ser numérico cuando se proporciona.", 400)
+
+    conn = get_connection()
+    cursor = conn.cursor(dictionary=True)
+    try:
+        cursor.execute(
+            "SELECT id, nombre_sensor FROM sensores WHERE id_usuario = %s",
+            (id_usuario,),
+        )
+        sensores = cursor.fetchall()
         if not sensores:
-            cur.close()
-            conn.close()
-            return jsonify({'success': True, 'data': []}), 200  # No error, solo vacío
+            return jsonify({"success": True, "data": []})
 
-        # Construir filtro de sensores
-        sensores_ids = [str(s[0]) for s in sensores]
-        if sensor_id and str(sensor_id) in sensores_ids:
-            sensores_ids = [str(sensor_id)]
+        sensores_ids = [sensor["id"] for sensor in sensores]
+        if sensor_id and sensor_id in sensores_ids:
+            sensores_ids = [sensor_id]
 
-        # Fechas
-        filtros = []
-        params = []
+        filtros = ["m.id_sensor IN (%s)" % ",".join(["%s"] * len(sensores_ids))]
+        params = list(sensores_ids)
+
         if fecha_inicio:
+            try:
+                fecha_inicio_dt = parse_iso_datetime(fecha_inicio)
+            except ValueError as exc:
+                return json_error(str(exc), 400)
             filtros.append("m.fecha >= %s")
-            params.append(datetime.strptime(fecha_inicio, '%Y-%m-%d'))
+            params.append(fecha_inicio_dt)
+
         if fecha_fin:
+            try:
+                fecha_fin_dt = parse_iso_datetime(fecha_fin)
+            except ValueError as exc:
+                return json_error(str(exc), 400)
             filtros.append("m.fecha <= %s")
-            params.append(datetime.strptime(fecha_fin, '%Y-%m-%d'))
+            params.append(fecha_fin_dt)
 
-        # Filtro sensores
-        filtros.append(f"m.id_sensor IN %s")
-        params.append(tuple(map(int, sensores_ids)))
-
-        where = " AND ".join(filtros)
-        query = f"""
+        where_clause = " AND ".join(filtros)
+        cursor.execute(
+            f"""
             SELECT m.id_sensor, s.nombre_sensor, m.fecha, m.valor_de_la_medida
             FROM medidas m
-            JOIN sensores s ON m.id_sensor = s.id
-            WHERE {where}
+            INNER JOIN sensores s ON m.id_sensor = s.id
+            WHERE {where_clause}
             ORDER BY m.fecha ASC
-        """
-        cur.execute(query, tuple(params))
-        resultados = cur.fetchall()
+            """,
+            tuple(params),
+        )
+        registros = cursor.fetchall()
 
-        from collections import defaultdict
-        data_result = []
-        if tipo_reporte in ('semanal', 'mensual'):
+        if tipo_reporte in ("semanal", "mensual"):
+            from collections import defaultdict
+
             agrupados = defaultdict(list)
-            for row in resultados:
-                fecha = row[2]
-                if tipo_reporte == 'semanal':
-                    key = f"{fecha.year}-S{fecha.isocalendar()[1]}"
+            for fila in registros:
+                fecha = fila["fecha"]
+                if tipo_reporte == "semanal":
+                    clave = f"{fecha.year}-S{fecha.isocalendar()[1]}"
                 else:
-                    key = f"{fecha.year}-{fecha.month:02d}"
-                agrupados[(row[0], key)].append(row)
-            for (sensor_id, periodo), rows in agrupados.items():
-                valores = [r[3] for r in rows]
-                promedio = sum(valores) / len(valores) if valores else 0
-                data_result.append({
-                    'sensor_id': sensor_id,
-                    'nombre_sensor': sensores_dict.get(str(sensor_id), ''),
-                    'periodo': periodo,
-                    'promedio': round(promedio, 2),
-                    'medidas': len(valores)
-                })
-        else:
-            for row in resultados:
-                data_result.append({
-                    'sensor_id': row[0],
-                    'nombre_sensor': row[1],
-                    'fecha': row[2].strftime('%Y-%m-%d %H:%M:%S'),
-                    'valor': row[3]
-                })
+                    clave = f"{fecha.year}-{fecha.month:02d}"
+                agrupados[(fila["id_sensor"], clave)].append(fila)
 
-        cur.close()
-        conn.close()
-        return jsonify({'success': True, 'data': data_result}), 200
-    except Exception as e:
-        print(f"Error en reporte_usuario: {e}")
-        return jsonify({'success': False, 'message': 'Error al generar el reporte', 'data': []}), 500
+            respuesta = []
+            for (sensor, periodo), filas in agrupados.items():
+                valores = [f["valor_de_la_medida"] for f in filas]
+                promedio = sum(valores) / len(valores) if valores else 0
+                respuesta.append({
+                    "sensor_id": sensor,
+                    "nombre_sensor": filas[0]["nombre_sensor"],
+                    "periodo": periodo,
+                    "promedio": round(promedio, 2),
+                    "medidas": len(valores),
+                })
+            return jsonify({"success": True, "data": respuesta})
+
+        respuesta = [{
+            "sensor_id": fila["id_sensor"],
+            "nombre_sensor": fila["nombre_sensor"],
+            "fecha": fila["fecha"].strftime("%Y-%m-%d %H:%M:%S"),
+            "valor": fila["valor_de_la_medida"],
+        } for fila in registros]
+        return jsonify({"success": True, "data": respuesta})
+    except Error as exc:
+        print("Error al generar reporte de usuario:", exc)
+        return json_error("No se pudo generar el reporte.", 500)
+    finally:
+        close_resources(cursor, conn)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    app.run(debug=True, host='0.0.0.0', port=port)
-from mysql.connector import Error
-from mysql.connector.cursor import MySQLCursorDict
+    port = int(os.environ.get("PORT", 5000))
+    app.run(debug=True, host="0.0.0.0", port=port)
