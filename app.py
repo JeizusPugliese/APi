@@ -22,11 +22,11 @@ SECRET_KEY = os.environ.get("JWT_SECRET", "12345666")
 TOKEN_DURATION_HOURS = int(os.environ.get("TOKEN_DURATION_HOURS", 1))
 
 DB_CONFIG = {
-    "user": os.environ.get("DB_USER", "uenymddgdke4oru1"),
-    "password": os.environ.get("DB_PASSWORD", "vzw76fQHidaCmfKR8n4S"),
-    "host": os.environ.get("DB_HOST", "b4bg4mzpg5vjh8rso0wo-mysql.services.clever-cloud.com"),
+    "user": os.environ.get("DB_USER", "u944963489_Admin"),
+    "password": os.environ.get("DB_PASSWORD", "Greentech2025"),
+    "host": os.environ.get("DB_HOST", "srv766.hstgr.io"),
     "port": int(os.environ.get("DB_PORT", 3306)),
-    "database": os.environ.get("DB_NAME", "b4bg4mzpg5vjh8rso0wo"),
+    "database": os.environ.get("DB_NAME", "u944963489_greentech"),
 }
 
 
@@ -1051,4 +1051,5 @@ def reporte_usuario():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host="0.0.0.0", port=port)
+
 
