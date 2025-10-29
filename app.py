@@ -26,7 +26,7 @@ DB_CONFIG = {
     "password": os.environ.get("DB_PASSWORD", "Greentech2025"),
     "host": os.environ.get("DB_HOST", "srv766.hstgr.io"),
     "port": int(os.environ.get("DB_PORT", 3306)),
-    "database": os.environ.get("DB_NAME", "u944963489_greentech"),
+    "database": os.environ.get("DB_NAME", "u944963489_greentech")
 }
 
 
@@ -1051,5 +1051,6 @@ def reporte_usuario():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host="0.0.0.0", port=port)
+
 
 
