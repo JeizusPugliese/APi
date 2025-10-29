@@ -3,7 +3,8 @@ from flask_cors import CORS
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from mysql.connector import Error, pooling
+import mysql.connector
+from mysql.connector import Error
 import jwt as pyjwt
 
 
@@ -28,34 +29,20 @@ DB_CONFIG = {
     "database": os.environ.get("DB_NAME", "bwmc0ch6np8udxefdc4p"),
 }
 
-POOL_NAME = os.environ.get("DB_POOL_NAME", "api_pool")
-POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", 5))
-
-try:
-    connection_pool = pooling.MySQLConnectionPool(
-        pool_name=POOL_NAME,
-        pool_size=POOL_SIZE,
-        pool_reset_session=True,
-        **DB_CONFIG,
-    )
-    print(f"Pool de conexiones MySQL '{POOL_NAME}' inicializado con tamaño {POOL_SIZE}.")
-except Error as exc:
-    print("Error al crear el pool de conexiones MySQL:", exc)
-    raise
-
 
 # ---------------------------------------------------------------------------
 # Utilidades generales
 # ---------------------------------------------------------------------------
 
 def get_connection():
-    """Obtiene una conexión activa del pool MySQL o lanza Error."""
+    """Obtiene una conexión activa a MySQL o lanza Error."""
     try:
-        conn = connection_pool.get_connection()
-        print("Conexión MySQL obtenida del pool.")
-        return conn
+        conn = mysql.connector.connect(**DB_CONFIG)
+        if conn.is_connected():
+            return conn
+        raise Error("No se pudo establecer la conexión con MySQL")
     except Error as exc:
-        print("Error al obtener conexión del pool:", exc)
+        print("Error de conexión MySQL:", exc)
         raise
 
 
@@ -200,23 +187,6 @@ def token_is_valid(token_header):
 @app.route("/")
 def home():
     return jsonify({"message": "Bienvenido a la API MySQL de InfoIoT"})
-
-
-@app.route("/health", methods=["GET"])
-def health_check():
-    conn = None
-    cursor = None
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1")
-        cursor.fetchone()
-        return jsonify({"success": True, "database": "connected"})
-    except Error as exc:
-        print("Health check failed:", exc)
-        return jsonify({"success": False, "message": "Error de conexión con la base de datos"}), 500
-    finally:
-        close_resources(cursor, conn)
 
 
 # ---------------------------------------------------------------------------
