@@ -3,8 +3,7 @@ from flask_cors import CORS
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error, pooling
 import jwt as pyjwt
 
 
@@ -22,12 +21,27 @@ SECRET_KEY = os.environ.get("JWT_SECRET", "12345666")
 TOKEN_DURATION_HOURS = int(os.environ.get("TOKEN_DURATION_HOURS", 1))
 
 DB_CONFIG = {
-    "user": os.environ.get("DB_USER", "u944963489_Admin"),
-    "password": os.environ.get("DB_PASSWORD", "Greentech2025"),
-    "host": os.environ.get("DB_HOST", "srv766.hstgr.io"),
+    "user": os.environ.get("DB_USER", "ub5pgwfmqlphbjdl"),
+    "password": os.environ.get("DB_PASSWORD", "UofpetGdsNMdjfA4reNC"),
+    "host": os.environ.get("DB_HOST", "bwmc0ch6np8udxefdc4p-mysql.services.clever-cloud.com"),
     "port": int(os.environ.get("DB_PORT", 3306)),
-    "database": os.environ.get("DB_NAME", "u944963489_greentech"),
+    "database": os.environ.get("DB_NAME", "bwmc0ch6np8udxefdc4p"),
 }
+
+POOL_NAME = os.environ.get("DB_POOL_NAME", "api_pool")
+POOL_SIZE = int(os.environ.get("DB_POOL_SIZE", 5))
+
+try:
+    connection_pool = pooling.MySQLConnectionPool(
+        pool_name=POOL_NAME,
+        pool_size=POOL_SIZE,
+        pool_reset_session=True,
+        **DB_CONFIG,
+    )
+    print(f"Pool de conexiones MySQL '{POOL_NAME}' inicializado con tamaño {POOL_SIZE}.")
+except Error as exc:
+    print("Error al crear el pool de conexiones MySQL:", exc)
+    raise
 
 
 # ---------------------------------------------------------------------------
@@ -35,14 +49,13 @@ DB_CONFIG = {
 # ---------------------------------------------------------------------------
 
 def get_connection():
-    """Obtiene una conexión activa a MySQL o lanza Error."""
+    """Obtiene una conexión activa del pool MySQL o lanza Error."""
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
-        if conn.is_connected():
-            return conn
-        raise Error("No se pudo establecer la conexión con MySQL")
+        conn = connection_pool.get_connection()
+        print("Conexión MySQL obtenida del pool.")
+        return conn
     except Error as exc:
-        print("Error de conexión MySQL:", exc)
+        print("Error al obtener conexión del pool:", exc)
         raise
 
 
@@ -204,7 +217,6 @@ def health_check():
         return jsonify({"success": False, "message": "Error de conexión con la base de datos"}), 500
     finally:
         close_resources(cursor, conn)
-
 
 
 # ---------------------------------------------------------------------------
@@ -1069,4 +1081,3 @@ def reporte_usuario():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(debug=True, host="0.0.0.0", port=port)
-
